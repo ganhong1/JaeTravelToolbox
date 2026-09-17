@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "announcement": {
+    "url": "",
+    "timeoutSeconds": 8
+  },
+  "updater": {
+    "provider": "github",
+    "owner": "",
+    "repo": "",
+    "channel": "latest"
+  }
+}

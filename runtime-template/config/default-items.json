@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "items": [
+    { "image": "", "name": "明日方舟官方网站", "target": "https://ak.hypergryph.com/", "description": "官方新闻、活动和游戏资料入口。", "category": "", "favorite": true },
+    { "image": "", "name": "企鹅物流数据统计", "target": "https://penguin-stats.io/", "description": "查询关卡掉落、样本量与素材产出效率。", "category": "", "favorite": false },
+    { "image": "", "name": "打开工具箱目录", "target": ".", "description": "在文件资源管理器中打开阿洁的旅行工具箱目录。", "category": "", "favorite": false }
+  ]
+}

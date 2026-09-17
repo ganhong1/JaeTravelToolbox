@@ -1,0 +1,19 @@
+node_modules/
+dist/
+release/
+*.tsbuildinfo
+
+# 用户的本地运行数据，不作为源码提交。
+/items/
+/static/
+/tools/
+/config/
+/logs/
+
+# 设计参考与开发期临时素材由本机保留，不纳入版本控制。
+/design-demo/
+/开发临时用资源库/
+
+# 已被新版旅行箱图标替代的本地旧素材，不纳入仓库。
+/apps/desktop/renderer/assets/angelina-suitcase-icon-v1.png
+/apps/desktop/renderer/assets/angelina-suitcase-icon-v1.ico

@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>阿洁的旅行工具箱</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="wallpaper" aria-hidden="true"></div>
+    <div class="page-wash" aria-hidden="true"></div>
+
+    <aside class="category-drawer" id="category-drawer" aria-label="分类导航">
+      <div class="drawer-heading">
+        <span>分类</span>
+        <button class="icon-button" id="close-drawer" type="button" aria-label="收起分类栏">‹</button>
+      </div>
+      <nav class="category-list" aria-label="工具分类">
+        <button class="category-item is-active" type="button" data-category="全部">
+          <span class="category-mark">✦</span><span>全部</span><b>12</b>
+        </button>
+        <button class="category-item" type="button" data-category="收藏">
+          <span class="category-mark">★</span><span>收藏</span><b>0</b>
+        </button>
+        <button class="category-item" type="button" data-category="公开招募">
+          <span class="category-mark">◇</span><span>公开招募</span><b>2</b>
+        </button>
+        <button class="category-item" type="button" data-category="养成规划">
+          <span class="category-mark">◌</span><span>养成规划</span><b>3</b>
+        </button>
+        <button class="category-item" type="button" data-category="数据查询">
+          <span class="category-mark">⌁</span><span>数据查询</span><b>3</b>
+        </button>
+        <button class="category-item" type="button" data-category="攻略地图">
+          <span class="category-mark">⌖</span><span>攻略地图</span><b>2</b>
+        </button>
+        <button class="category-item" type="button" data-category="常用网站">
+          <span class="category-mark">↗</span><span>常用网站</span><b>2</b>
+        </button>
+      </nav>
+      <div class="drawer-footer">
+        <button class="text-button" id="add-category" type="button">＋ 新建分类</button>
+      </div>
+    </aside>
+    <div class="drawer-backdrop" id="drawer-backdrop" hidden aria-hidden="true"></div>
+
+    <button class="drawer-handle" id="open-drawer" type="button" aria-label="展开分类栏" aria-expanded="false">
+      <span>分类</span><span aria-hidden="true">›</span>
+    </button>
+
+    <main class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#top" aria-label="返回工具箱首页">
+          <span class="brand-avatar" aria-hidden="true"><img src="./assets/angelina-brand-avatar.png" alt="" /></span>
+          <span class="brand-copy"><strong>阿洁的旅行工具箱</strong><small>Angelina Travel Toolbox</small></span>
+        </a>
+        <div class="topbar-actions">
+          <button class="guide-button announcement-button" id="open-announcement" type="button" aria-haspopup="dialog">公告<span id="announcement-dot" class="announcement-dot" hidden aria-label="有未读公告"></span></button>
+          <button class="guide-button" id="open-guide" type="button" aria-haspopup="dialog">使用教程</button>
+          <div class="settings-wrap">
+            <button class="settings-button" id="open-settings" type="button" aria-label="打开设置菜单" aria-expanded="false" aria-controls="settings-menu">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2 2-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V20.2h-2.8v-.1A1.7 1.7 0 0 0 11 18.54a1.7 1.7 0 0 0-1.88.34l-.06.06-2-2 .06-.06A1.7 1.7 0 0 0 7.46 15a1.7 1.7 0 0 0-1.56-1.03h-.1v-2.8h.1A1.7 1.7 0 0 0 7.46 10a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2-2 .06.06A1.7 1.7 0 0 0 11 6.46a1.7 1.7 0 0 0 1.03-1.56v-.1h2.8v.1A1.7 1.7 0 0 0 15.86 6.46a1.7 1.7 0 0 0 1.88-.34l.06-.06 2 2-.06.06A1.7 1.7 0 0 0 19.4 10a1.7 1.7 0 0 0 1.56 1.03h.1v2.8h-.1A1.7 1.7 0 0 0 19.4 15Z"></path></svg>
+              <span>设置</span>
+            </button>
+            <div class="settings-menu" id="settings-menu" hidden>
+              <button id="import-config" type="button">导入配置</button>
+              <button id="export-config" type="button">导出配置</button>
+              <button id="manage-categories" type="button">分类管理</button>
+              <button id="manage-schedules" type="button">定时启动管理</button>
+              <button id="manage-shortcuts" type="button">快捷键与快捷轮盘设置</button>
+              <button id="manage-batch" type="button">批量管理</button>
+              <button id="manage-sources" type="button">配置源设置</button>
+              <button id="custom-background" type="button">自定义背景图片</button>
+              <button id="manage-update" type="button">软件更新</button>
+              <button class="settings-primary" id="add-item" type="button">＋ 添加项目</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <section class="workspace" id="top" aria-labelledby="page-title">
+        <div class="workspace-intro">
+          <div>
+            <p class="eyebrow">我的清单</p>
+            <h1 id="page-title">全部工具</h1>
+            <p class="subtitle" id="category-description">把常用网站、本地工具和资料入口放在同一处。</p>
+          </div>
+          <label class="search-field">
+            <span class="search-icon" aria-hidden="true">⌕</span>
+            <span class="sr-only">搜索工具</span>
+            <input id="search" type="search" placeholder="搜索工具、网站或说明" autocomplete="off" />
+          </label>
+        </div>
+
+        <section class="batch-toolbar" id="batch-toolbar" hidden aria-label="批量管理工具栏">
+          <strong>批量管理</strong><span>已选择 <b id="batch-selected-count">0</b> 项</span>
+          <div class="batch-toolbar-actions">
+            <button class="tool-button" id="select-visible-items" type="button">全选当前结果</button>
+            <button class="tool-button" id="clear-batch-selection" type="button">清空选择</button>
+            <button class="tool-button" id="move-selected-items" type="button">移动到分类</button>
+            <button class="tool-button" id="copy-selected-items" type="button">复制到分类</button>
+            <button class="danger-button" id="delete-selected-items" type="button">删除所选</button>
+            <button class="primary-button" id="exit-batch-mode" type="button">完成</button>
+          </div>
+        </section>
+
+        <section class="tool-grid" id="tool-grid" aria-label="工具项目">
+          <article class="tool-card" data-category="公开招募" data-favorite="true" data-search="公开招募 计算器 标签 干员" data-target="tools/recruitment/RecruitmentTool.exe">
+            <div class="card-topline"><span class="source-local">本地工具</span><div class="card-controls"><button class="edit-button" aria-label="编辑公开招募计算器" type="button">编辑</button><button class="star-button is-favorite" aria-label="收藏公开招募计算器" type="button">★</button></div></div>
+            <div class="card-illustration amber"><img src="./assets/angelina-icon-draft-v1.ico" alt="公开招募计算器图标" /><span class="icon-fallback" aria-hidden="true">招</span></div>
+            <div class="card-copy"><h2>公开招募计算器</h2><p>快速筛选标签组合与可能出现的干员。</p></div>
+            <button class="launch-button" type="button" aria-label="启动公开招募计算器"><span>启动</span><span aria-hidden="true">↗</span></button>
+          </article>
+
+          <article class="tool-card" data-category="养成规划" data-search="养成规划 材料 计算 升级" data-target="https://planner.example.com">
+            <div class="card-topline"><span class="source-web">网站</span><div class="card-controls"><button class="edit-button" aria-label="编辑养成规划器" type="button">编辑</button><button class="star-button" aria-label="收藏养成规划器" type="button">☆</button></div></div>
+            <div class="card-illustration lime"><img src="./assets/angelina-icon-draft-v1.png" alt="养成规划器图标" /><span class="icon-fallback" aria-hidden="true">育</span></div>
+            <div class="card-copy"><h2>养成规划器</h2><p>按目标干员整理升级、技能和模组材料。</p></div>
+            <button class="launch-button" type="button" aria-label="启动养成规划器"><span>启动</span><span aria-hidden="true">↗</span></button>
+          </article>
+
+          <article class="tool-card" data-category="数据查询" data-search="企鹅物流 掉落 数据 查询" data-target="https://penguin-stats.cn/">
+            <div class="card-topline"><span class="source-web">网站</span><div class="card-controls"><button class="edit-button" aria-label="编辑企鹅物流数据统计" type="button">编辑</button><button class="star-button" aria-label="收藏企鹅物流数据统计" type="button">☆</button></div></div>
+            <div class="card-illustration ocean"><span class="icon-fallback" aria-hidden="true">数</span></div>
+            <div class="card-copy"><h2>企鹅物流数据统计</h2><p>查询关卡掉落、样本量与素材产出效率。</p></div>
+            <button class="launch-button" type="button" aria-label="启动企鹅物流数据统计"><span>启动</span><span aria-hidden="true">↗</span></button>
+          </article>
+
+          <article class="tool-card" data-category="攻略地图" data-search="关卡 地图 攻略 肉鸽" data-target="https://map.example.com">
+            <div class="card-topline"><span class="source-web">网站</span><div class="card-controls"><button class="edit-button" aria-label="编辑关卡地图攻略" type="button">编辑</button><button class="star-button" aria-label="收藏关卡地图攻略" type="button">☆</button></div></div>
+            <div class="card-illustration violet"><span class="icon-fallback" aria-hidden="true">图</span></div>
+            <div class="card-copy"><h2>关卡地图攻略</h2><p>关卡资料、敌人信息与路线参考入口。</p></div>
+            <button class="launch-button" type="button" aria-label="启动关卡地图攻略"><span>启动</span><span aria-hidden="true">↗</span></button>
+          </article>
+
+          <article class="tool-card" data-category="养成规划" data-search="排班 基建 助手 贸易站" data-target="tools/base/BaseAssistant.exe">
+            <div class="card-topline"><span class="source-local">本地工具</span><div class="card-controls"><button class="edit-button" aria-label="编辑基建排班助手" type="button">编辑</button><button class="star-button" aria-label="收藏基建排班助手" type="button">☆</button></div></div>
+            <div class="card-illustration rose"><span class="icon-fallback" aria-hidden="true">班</span></div>
+            <div class="card-copy"><h2>基建排班助手</h2><p>按设施与心情安排干员，减少重复操作。</p></div>
+            <button class="launch-button" type="button" aria-label="启动基建排班助手"><span>启动</span><span aria-hidden="true">↗</span></button>
+          </article>
+
+          <article class="tool-card" data-category="数据查询" data-search="干员 图鉴 属性 技能" data-target="https://wiki.example.com">
+            <div class="card-topline"><span class="source-web">网站</span><div class="card-controls"><button class="edit-button" aria-label="编辑干员图鉴" type="button">编辑</button><button class="star-button" aria-label="收藏干员图鉴" type="button">☆</button></div></div>
+            <div class="card-illustration cocoa"><span class="icon-fallback" aria-hidden="true">档</span></div>
+            <div class="card-copy"><h2>干员图鉴</h2><p>查看干员天赋、技能、模组及基础资料。</p></div>
+            <button class="launch-button" type="button" aria-label="启动干员图鉴"><span>启动</span><span aria-hidden="true">↗</span></button>
+          </article>
+
+          <article class="tool-card" data-category="常用网站" data-search="官方公告 活动 新闻" data-target="https://ak.hypergryph.com/news.html">
+            <div class="card-topline"><span class="source-web">网站</span><div class="card-controls"><button class="edit-button" aria-label="编辑官方公告" type="button">编辑</button><button class="star-button" aria-label="收藏官方公告" type="button">☆</button></div></div>
+            <div class="card-illustration sky"><span class="icon-fallback" aria-hidden="true">告</span></div>
+            <div class="card-copy"><h2>官方公告</h2><p>活动、版本更新与游戏内公告的快捷入口。</p></div>
+            <button class="launch-button" type="button" aria-label="启动官方公告"><span>启动</span><span aria-hidden="true">↗</span></button>
+          </article>
+
+          <article class="tool-card add-card" data-category="" data-search="添加 新建 项目">
+            <div class="add-symbol" aria-hidden="true">＋</div>
+            <div class="card-copy"><h2>添加你的工具</h2><p>本地程序、文件夹或网站都可以加入。</p></div>
+            <button class="launch-button" id="add-item-card" type="button">新建项目 <span>→</span></button>
+          </article>
+
+          <section class="empty-state" id="empty-state" hidden>
+            <div>⌕</div><h2>没有找到匹配的项目</h2><p>换个关键词，或添加一个新的工具入口。</p>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <dialog class="edit-dialog" id="edit-dialog" aria-labelledby="edit-dialog-title">
+      <form class="edit-form" id="edit-form" method="dialog">
+        <header class="dialog-header">
+          <div><p class="eyebrow">编辑项目</p><h2 id="edit-dialog-title">修改工具信息</h2></div>
+          <button class="icon-button" id="close-editor" type="button" aria-label="关闭编辑窗口">×</button>
+        </header>
+        <div class="editor-content">
+          <div class="image-picker" aria-label="项目头像预览">
+            <div class="editor-avatar" id="editor-avatar" aria-hidden="true">招</div>
+            <input id="image-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/x-icon,.ico,.icon" hidden />
+            <button class="tool-button" id="change-image" type="button">更换图片</button>
+            <p>支持 PNG、JPG、WebP、GIF，以及 Windows 图标文件 <code>.ico</code>。</p>
+          </div>
+          <div class="editor-fields">
+            <label for="item-name">名称 <span aria-hidden="true">*</span></label>
+            <input id="item-name" name="name" required aria-required="true" />
+            <label for="item-target">启动路径或网址 <span aria-hidden="true">*</span></label>
+            <input id="item-target" name="target" required aria-required="true" aria-describedby="target-hint" />
+            <p class="field-hint" id="target-hint">相对路径以工具箱根目录为基准。</p>
+            <label for="item-category">分类</label>
+            <input id="item-category" name="category" list="category-options" placeholder="未分类" />
+            <datalist id="category-options"><option value="公开招募"></option><option value="养成规划"></option><option value="数据查询"></option><option value="攻略地图"></option><option value="常用网站"></option></datalist>
+            <label for="item-description">简介</label>
+            <textarea id="item-description" name="description" rows="3"></textarea>
+            <section class="advanced-launch-editor" id="advanced-launch-editor" hidden>
+              <label class="advanced-launch-toggle"><input id="advanced-launch-enabled" type="checkbox" /> 启用高级启动项</label>
+              <p class="field-hint">开启后，卡片会显示“高级启动”下拉菜单，可使用管理员启动或自定义 CMD 命令。</p>
+              <div id="command-launch-editor" hidden>
+                <div class="command-launch-heading"><strong>自定义命令启动</strong><button class="tool-button" id="add-command-launch" type="button">＋ 新增命令</button></div>
+                <div id="command-launch-list"></div>
+              </div>
+            </section>
+          </div>
+        </div>
+        <footer class="dialog-footer">
+          <button class="delete-button" id="delete-item" type="button">删除此项目</button>
+          <button class="tool-button" id="import-item-to-source" type="button">导入到配置源</button>
+          <div class="dialog-actions"><button class="tool-button" id="cancel-edit" type="button">取消</button><button class="primary-button" type="submit">保存修改</button></div>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog class="edit-dialog category-dialog" id="source-dialog" aria-labelledby="source-dialog-title">
+      <form class="edit-form" id="source-form">
+        <header class="dialog-header"><div><p class="eyebrow">配置源设置</p><h2 id="source-dialog-title">切换你的清单</h2></div><button class="icon-button" id="close-source-dialog" type="button" aria-label="关闭配置源设置">×</button></header>
+        <section class="managed-category-list"><div class="managed-list-heading"><h3>已有配置源</h3><span>默认配置源不可删除。</span></div><div id="source-items" aria-live="polite"></div></section>
+        <section class="category-creator"><h3>新建配置源</h3><label class="sr-only" for="source-name">配置源名称</label><div class="category-create-row"><input id="source-name" required placeholder="例如：日常使用" /><button class="primary-button" type="submit">新建</button></div><label class="source-inherit"><input id="source-inherit" type="checkbox" checked /> 创建时继承默认配置源</label></section>
+        <footer class="dialog-footer"><p class="field-hint">切换配置源不会影响其他清单。</p><div class="dialog-actions"><button class="tool-button" id="done-managing-sources" type="button">完成</button></div></footer>
+      </form>
+    </dialog>
+
+    <dialog class="edit-dialog category-dialog" id="item-import-dialog" aria-labelledby="item-import-dialog-title">
+      <form class="edit-form" id="item-import-form"><header class="dialog-header"><div><p class="eyebrow">导入项目</p><h2 id="item-import-dialog-title">复制到配置源</h2></div><button class="icon-button" id="close-item-import" type="button" aria-label="关闭导入项目窗口">×</button></header><section class="category-creator"><label for="item-import-target">目标配置源</label><select id="item-import-target"></select><p class="field-hint">会复制当前项目；原项目不会移动或删除。</p></section><footer class="dialog-footer"><div></div><div class="dialog-actions"><button class="tool-button" id="cancel-item-import" type="button">取消</button><button class="primary-button" type="submit">导入项目</button></div></footer></form>
+    </dialog>
+
+    <dialog class="confirm-dialog" id="confirm-dialog" aria-labelledby="confirm-dialog-title">
+      <form method="dialog">
+        <p class="eyebrow">删除项目</p><h2 id="confirm-dialog-title">确定删除这个项目？</h2>
+        <p id="delete-description">删除后将无法在工具箱中恢复。</p>
+        <div class="dialog-actions"><button class="tool-button" id="cancel-delete" type="button">保留项目</button><button class="danger-button" id="confirm-delete" type="button">确认删除</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="edit-dialog category-dialog" id="category-dialog" aria-labelledby="category-dialog-title">
+      <form class="edit-form" id="category-form">
+        <header class="dialog-header">
+          <div><p class="eyebrow">分类管理</p><h2 id="category-dialog-title">管理你的分类</h2></div>
+          <button class="icon-button" id="close-category-dialog" type="button" aria-label="关闭分类管理窗口">×</button>
+        </header>
+        <section class="category-creator" aria-labelledby="new-category-title">
+          <h3 id="new-category-title">新建分类</h3>
+          <label class="sr-only" for="new-category-name">分类名称</label>
+          <div class="category-create-row"><input id="new-category-name" required aria-required="true" placeholder="输入中文分类名称" /><button class="primary-button" type="submit">添加分类</button></div>
+          <p class="field-hint" id="category-name-hint">分类名称同时作为分类 ID，必须为中文且不能重复。</p>
+        </section>
+        <section class="managed-category-list" aria-labelledby="managed-category-title">
+          <div class="managed-list-heading"><h3 id="managed-category-title">已有分类</h3><span>删除后，相关项目将变为未分类。</span></div>
+          <div id="managed-category-items" aria-live="polite"></div>
+        </section>
+        <footer class="dialog-footer"><p class="field-hint">“全部”和“收藏”是系统分类，不能删除。</p><div class="dialog-actions"><button class="tool-button" id="done-managing-categories" type="button">完成</button></div></footer>
+      </form>
+    </dialog>
+
+    <dialog class="edit-dialog background-dialog" id="background-dialog" aria-labelledby="background-dialog-title">
+      <form class="edit-form" method="dialog">
+        <header class="dialog-header">
+          <div><p class="eyebrow">背景设置</p><h2 id="background-dialog-title">自定义背景图片</h2></div>
+          <button class="icon-button" id="close-background-dialog" type="button" aria-label="关闭背景设置窗口">×</button>
+        </header>
+        <section class="background-content">
+          <button class="background-dropzone" id="choose-background" type="button">
+            <span aria-hidden="true">⇧</span><strong>拖拽图片到这里即可生效</strong><small>或点击选择本地图片</small>
+          </button>
+          <p class="field-hint">支持 PNG、JPG、WebP、GIF 与 BMP 图片。</p>
+          <div class="background-history-heading"><h3>历史背景</h3><span>最近使用</span></div>
+          <div class="background-history" id="background-history" aria-live="polite"></div>
+        </section>
+        <footer class="dialog-footer"><button class="delete-button" id="reset-background" type="button">恢复默认背景</button><div class="dialog-actions"><button class="tool-button" id="done-background" type="button">完成</button></div></footer>
+      </form>
+    </dialog>
+
+    <dialog class="edit-dialog transfer-dialog" id="export-dialog" aria-labelledby="export-dialog-title">
+      <form class="edit-form" id="export-form">
+        <header class="dialog-header"><div><p class="eyebrow">导出配置</p><h2 id="export-dialog-title">带走你的清单</h2></div><button class="icon-button" id="close-export" type="button" aria-label="关闭导出窗口">×</button></header>
+        <section class="transfer-content">
+          <div class="transfer-icon" aria-hidden="true">⇩</div><h3>导出为 <code>.attconfig</code></h3>
+          <p>配置包包含项目、分类、收藏状态和自定义图片；不会包含工具程序、工具箱本体或日志。</p>
+          <label class="export-source-picker" for="export-source">选择配置源<select id="export-source"></select></label>
+          <div class="transfer-summary"><span id="export-item-count">0</span><small>个项目</small><span id="export-category-count">0</span><small>个自定义分类</small></div>
+        </section>
+        <footer class="dialog-footer"><p class="field-hint">可用于备份或迁移到另一台设备。</p><div class="dialog-actions"><button class="tool-button" id="cancel-export" type="button">取消</button><button class="primary-button" type="submit">导出配置包</button></div></footer>
+      </form>
+    </dialog>
+
+    <dialog class="edit-dialog transfer-dialog" id="import-dialog" aria-labelledby="import-dialog-title">
+      <form class="edit-form" id="import-form">
+        <header class="dialog-header"><div><p class="eyebrow">导入配置</p><h2 id="import-dialog-title">迁入你的清单</h2></div><button class="icon-button" id="close-import" type="button" aria-label="关闭导入窗口">×</button></header>
+        <section class="transfer-content import-content">
+          <input id="import-file" type="file" accept=".attconfig,application/zip" hidden />
+          <button class="import-dropzone" id="choose-import-file" type="button"><span aria-hidden="true">⇧</span><strong>选择 .attconfig 配置包</strong><small id="import-file-name">尚未选择文件</small></button>
+          <fieldset class="import-mode"><legend>导入方式</legend><label><input type="radio" name="import-mode" value="incremental" checked /> 增量导入 <small>创建新的配置源导入，不影响现有清单。</small></label><label><input type="radio" name="import-mode" value="merge" /> 合并导入 <small>保留现有项目，并加入新内容。</small></label><label><input type="radio" name="import-mode" value="overwrite" /> 覆盖导入 <small>以配置包内容替换当前配置。</small></label></fieldset>
+        </section>
+        <footer class="dialog-footer"><p class="field-hint">导入前会先显示变更预览（正式功能）。</p><div class="dialog-actions"><button class="tool-button" id="cancel-import" type="button">取消</button><button class="primary-button" type="submit">开始导入</button></div></footer>
+      </form>
+    </dialog>
+
+    <dialog class="edit-dialog" id="create-dialog" aria-labelledby="create-dialog-title">
+      <form class="edit-form" id="create-form">
+        <header class="dialog-header">
+          <div><p class="eyebrow">新建项目</p><h2 id="create-dialog-title">把工具加入清单</h2></div>
+          <button class="icon-button" id="close-create" type="button" aria-label="关闭新建窗口">×</button>
+        </header>
+        <div class="editor-content">
+          <div class="image-picker" aria-label="新项目头像预览">
+            <div class="editor-avatar amber" id="create-avatar" aria-hidden="true"><span class="icon-fallback">＋</span></div>
+            <input id="create-image-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/x-icon,.ico,.icon" hidden />
+            <button class="tool-button" id="choose-create-image" type="button">选择图标</button>
+            <p>可使用 PNG、JPG、WebP、GIF 或 Windows 图标文件 <code>.ico</code>。</p>
+          </div>
+          <div class="editor-fields">
+            <label for="create-name">名称 <span aria-hidden="true">*</span></label>
+            <input id="create-name" name="name" required aria-required="true" placeholder="例如：公开招募计算器" />
+            <label for="create-target">启动路径或网址 <span aria-hidden="true">*</span></label>
+            <input id="create-target" name="target" required aria-required="true" aria-describedby="create-target-hint" placeholder="tools/example/tool.exe 或 https://..." />
+            <p class="field-hint" id="create-target-hint">本地相对路径以工具箱根目录为基准。</p>
+            <label for="create-category">分类</label>
+            <input id="create-category" name="category" list="category-options" placeholder="可留空或输入新分类" />
+            <label for="create-description">简介</label>
+            <textarea id="create-description" name="description" rows="3" placeholder="用一句话说明这个工具的用途。"></textarea>
+          </div>
+        </div>
+        <footer class="dialog-footer create-dialog-footer">
+          <p class="field-hint">保存后会立即出现在当前工具列表中。</p>
+          <div class="dialog-actions"><button class="tool-button" id="cancel-create" type="button">取消</button><button class="primary-button" type="submit">加入清单</button></div>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog class="edit-dialog category-dialog" id="batch-move-dialog" aria-labelledby="batch-move-dialog-title">
+      <form class="edit-form" id="batch-move-form">
+        <header class="dialog-header"><div><p class="eyebrow">批量管理</p><h2 id="batch-move-dialog-title">移动项目到分类</h2></div><button class="icon-button" id="close-batch-move" type="button" aria-label="关闭移动分类窗口">×</button></header>
+        <section class="category-creator"><label for="batch-category-select">选择已有分类</label><select id="batch-category-select"></select><p class="field-hint">或输入一个新的中文分类名；新分类会自动创建。</p><input id="batch-new-category" maxlength="32" placeholder="输入新分类名" /></section>
+        <footer class="dialog-footer"><p class="field-hint" id="batch-category-hint">仅影响当前配置源中已选择的项目。</p><div class="dialog-actions"><button class="tool-button" id="cancel-batch-move" type="button">取消</button><button class="primary-button" id="confirm-batch-category" type="submit">确认移动</button></div></footer>
+      </form>
+    </dialog>
+
+    <dialog class="confirm-dialog" id="batch-delete-dialog" aria-labelledby="batch-delete-dialog-title">
+      <form method="dialog"><p class="eyebrow">批量删除</p><h2 id="batch-delete-dialog-title">确定删除所选项目？</h2><p id="batch-delete-description">所选项目会从当前配置源移除；原程序、文件和网站不会被删除。</p><div class="dialog-actions"><button class="tool-button" id="cancel-batch-delete" type="button">保留项目</button><button class="danger-button" id="confirm-batch-delete" type="button">确认删除</button></div></form>
+    </dialog>
+
+    <dialog class="edit-dialog guide-dialog" id="guide-dialog" aria-labelledby="guide-dialog-title">
+      <section class="guide-shell"><header class="dialog-header"><div><p class="eyebrow">帮助中心</p><h2 id="guide-dialog-title">使用教程</h2></div><button class="icon-button" id="close-guide" type="button" aria-label="关闭使用教程">×</button></header><div class="guide-layout"><nav id="guide-toc" class="guide-toc" aria-label="教程目录"></nav><article id="guide-content" class="guide-content"></article></div><footer class="dialog-footer"><p class="field-hint">教程随程序更新，无需额外下载。</p><div class="dialog-actions"><button class="primary-button" id="done-guide" type="button">完成</button></div></footer></section>
+    </dialog>
+
+    <dialog class="edit-dialog guide-dialog" id="announcement-dialog" aria-labelledby="announcement-dialog-title">
+      <section class="guide-shell"><header class="dialog-header"><div><p class="eyebrow">官方信息</p><h2 id="announcement-dialog-title">公告</h2></div><button class="icon-button" id="close-announcement" type="button" aria-label="关闭公告">×</button></header><div class="guide-layout"><nav id="announcement-toc" class="guide-toc" aria-label="公告目录"></nav><article id="announcement-content" class="guide-content"></article></div><footer class="dialog-footer announcement-footer"><div><p class="field-hint" id="announcement-status">正在读取内置公告。</p><label class="announcement-dismiss-option"><input id="announcement-dismiss" type="checkbox" disabled /> 本版本更新前不再显示</label><p class="field-hint" id="announcement-scroll-hint">请阅读至公告底部后再设置。</p></div><div class="dialog-actions"><button class="primary-button" id="done-announcement" type="button">我知道了</button></div></footer></section>
+    </dialog>
+
+    <dialog class="edit-dialog update-dialog" id="update-dialog" aria-labelledby="update-dialog-title">
+      <section class="guide-shell"><header class="dialog-header"><div><p class="eyebrow">GitHub Releases</p><h2 id="update-dialog-title">软件更新</h2></div><button class="icon-button" id="close-update" type="button" aria-label="关闭软件更新">×</button></header><div class="update-content"><p class="update-version">当前版本 <strong id="update-current-version">—</strong></p><p class="update-status" id="update-status">正在读取更新状态。</p><article id="update-notes" class="guide-content update-notes"></article><fieldset class="update-options"><legend>更新偏好</legend><label><input id="update-check-on-launch" type="checkbox" /> 启动时检查更新</label><label><input id="update-auto-download" type="checkbox" /> 发现新版本后自动下载</label><label><input id="update-auto-install" type="checkbox" /> 退出旅行箱时自动安装已下载更新</label></fieldset></div><footer class="dialog-footer"><p class="field-hint" id="update-source-hint">官方更新资源仅来自 GitHub Releases。</p><div class="dialog-actions"><button class="tool-button" id="save-update-settings" type="button">保存偏好</button><button class="tool-button" id="check-update" type="button">检查更新</button><button class="primary-button" id="download-update" type="button" hidden>下载更新</button><button class="primary-button" id="install-update" type="button" hidden>重启并安装</button></div></footer></section>
+    </dialog>
+
+    <dialog class="edit-dialog schedule-dialog" id="schedule-dialog" aria-labelledby="schedule-dialog-title">
+      <form class="edit-form" id="schedule-form">
+        <header class="dialog-header"><div><p class="eyebrow">定时启动管理</p><h2 id="schedule-dialog-title">你的定时任务</h2></div><button class="icon-button" id="close-schedule" type="button" aria-label="关闭定时启动管理">×</button></header>
+        <section class="managed-category-list"><div class="managed-list-heading"><h3>已保存任务</h3><span>任务会按列表顺序进入执行队列。</span></div><div id="schedule-items"></div></section>
+        <section class="schedule-editor"><h3 id="schedule-editor-title">新建定时任务</h3><label>任务名称<input id="schedule-name" required maxlength="48" placeholder="例如：每日早班" /></label><label>配置源<select id="schedule-source"></select></label><fieldset class="schedule-mode"><legend>时间配置</legend><label><input type="radio" name="schedule-mode" value="simple" checked /> 简易设置</label><label><input type="radio" name="schedule-mode" value="cron" /> Cron 高级设置</label></fieldset><div id="simple-schedule-fields" class="schedule-fields"><label>频率<select id="simple-frequency"><option value="daily">每天</option><option value="weekly">每周</option><option value="monthly">每月</option></select></label><fieldset id="simple-days-wrap" class="weekday-picker"><legend>星期几</legend><label><input name="simple-day" value="1" type="checkbox" />一</label><label><input name="simple-day" value="2" type="checkbox" />二</label><label><input name="simple-day" value="3" type="checkbox" />三</label><label><input name="simple-day" value="4" type="checkbox" />四</label><label><input name="simple-day" value="5" type="checkbox" />五</label><label><input name="simple-day" value="6" type="checkbox" />六</label><label><input name="simple-day" value="0" type="checkbox" />日</label></fieldset><label id="simple-time-wrap">时间<input id="simple-time" type="time" value="09:00" /></label></div><label>Cron 规则<input id="schedule-cron" required value="0 9 * * *" /><small id="schedule-rule-preview">每天 09:00</small></label><fieldset class="schedule-options"><legend>触发设置</legend><label><input id="schedule-enabled" type="checkbox" checked /> 启用此任务</label><label><input id="schedule-wake" type="checkbox" checked /> 到达计划时间时启动工具箱</label><label><input id="schedule-startup" type="checkbox" /> 工具箱启动后立即执行一次</label><label><input id="schedule-repeat" type="checkbox" /> 按固定间隔重复触发</label><label id="schedule-repeat-wrap" hidden>每隔 <input id="schedule-repeat-minutes" type="number" min="1" max="1440" value="30" /> 分钟重复执行</label></fieldset><div class="schedule-steps-heading"><h3>启动队列</h3><select id="schedule-item-picker"></select><button class="tool-button" id="add-schedule-step" type="button">加入队列</button></div><div id="schedule-steps"></div></section>
+        <footer class="dialog-footer"><p class="field-hint">新加入项目默认在启动后等待 10 秒；最后一项不等待。</p><div class="dialog-actions"><button class="tool-button" id="new-schedule" type="button">新建任务</button><button class="primary-button" type="submit">保存任务</button></div></footer>
+      </form>
+    </dialog>
+
+    <dialog class="edit-dialog shortcut-dialog" id="shortcut-dialog" aria-labelledby="shortcut-dialog-title">
+      <form class="edit-form" id="shortcut-form">
+        <header class="dialog-header"><div><p class="eyebrow">快捷键与快捷轮盘设置</p><h2 id="shortcut-dialog-title">一键抵达常用工具</h2></div><button class="icon-button" id="close-shortcuts" type="button" aria-label="关闭快捷键设置">×</button></header>
+        <section class="shortcut-editor">
+          <label class="shortcut-switch"><input id="shortcuts-enabled" type="checkbox" /> 启用全局快捷键功能</label>
+          <p class="field-hint">快捷键在旅行箱位于后台时也会生效；若已被系统或其他程序占用，保存后会提示。</p>
+          <label>配置源<select id="shortcut-source"></select></label>
+          <section class="shortcut-section"><h3>快捷轮盘</h3><label class="shortcut-switch"><input id="wheel-enabled" type="checkbox" /> 启用快捷轮盘</label><div class="shortcut-binding"><span>唤起快捷键</span><button class="shortcut-capture-button" id="wheel-shortcut" type="button">点击设置快捷键</button></div><p class="field-hint">点击设置后直接按下所需按键或组合键。普通单键可能影响日常输入。</p><div class="wheel-appearance"><label>轮盘大小 <output id="wheel-size-value">760 px</output><input id="wheel-size" type="range" min="320" max="900" step="10" value="760" /></label><fieldset class="wheel-anchor"><legend>屏幕位置</legend><div class="wheel-anchor-grid" id="wheel-anchor-grid" role="radiogroup" aria-label="快捷轮盘屏幕位置"></div></fieldset><div class="wheel-offsets"><label>横向微调 <output id="wheel-offset-x-value">0%</output><input id="wheel-offset-x" type="range" min="-45" max="45" step="1" value="0" /></label><label>纵向微调 <output id="wheel-offset-y-value">0%</output><input id="wheel-offset-y" type="range" min="-45" max="45" step="1" value="0" /></label></div><button class="tool-button wheel-preview-button" id="preview-wheel" type="button">预览位置与大小</button></div><div class="wheel-slot-grid" id="wheel-slot-grid"></div></section>
+          <section class="shortcut-section"><h3>项目组合快捷键</h3><p class="field-hint">为当前配置源内的项目填写全局组合键；留空即不设置。</p><div id="item-shortcut-list" class="item-shortcut-list"></div></section>
+        </section>
+        <footer class="dialog-footer"><p class="field-hint">轮盘固定为外围 9 项与圆心 1 项。</p><div class="dialog-actions"><button class="tool-button" id="cancel-shortcuts" type="button">取消</button><button class="primary-button" type="submit">保存并生效</button></div></footer>
+      </form>
+    </dialog>
+    <dialog class="confirm-dialog shortcut-capture-dialog" id="shortcut-capture-dialog" aria-labelledby="shortcut-capture-title">
+      <section><p class="eyebrow">录制快捷键</p><h2 id="shortcut-capture-title">按下想要使用的按键</h2><p id="shortcut-capture-description">可直接按组合键或单个按键；修饰键本身不会保存。</p><output id="shortcut-capture-value" class="shortcut-capture-value">等待输入…</output><div class="dialog-actions"><button class="delete-button" id="clear-captured-shortcut" type="button">清除快捷键</button><button class="tool-button" id="cancel-captured-shortcut" type="button">取消</button></div></section>
+    </dialog>    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
