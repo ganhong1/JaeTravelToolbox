@@ -43,6 +43,7 @@
     "directories": {
       "output": "release"
     },
+    "artifactName": "JaeTravelToolbox-Setup-${version}.${ext}",
     "files": [
       "apps/desktop/**/*",
       "dist/renderer/**/*",
@@ -58,8 +59,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "perMachine": false,
-      "artifactName": "阿洁的旅行工具箱-Setup-${version}.${ext}"
+      "perMachine": false
     }
   }
 }
