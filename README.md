@@ -14,7 +14,7 @@ MPL-2.0 是按文件生效的弱 Copyleft 许可证：当你修改并分发本�
 
 ## 仓库范围
 
-`tools/` 是本地工具的放置目录，已被 `.gitignore` 排除，不会随本仓库提交。正式 Windows 安装包可在取得对应授权后携带首装工具副本；安装后会复制到用户数据目录，后续程序更新不会覆盖它。请自行确认你放入该目录的程序拥有合法的下载、使用及再分发授权。
+`tools/` 是本地工具的放置目录，已被 `.gitignore` 排除，不会随本仓库提交，也不会进入 Windows 安装程序。默认配置源所需的本地工具以独立工具资源包分发；用户可在应用的“本地工具资源包”界面选择 ZIP 安装，或在官方地址配置完成后直接下载。资源包安装到用户数据目录，应用更新不会覆盖它。请自行确认你放入该目录的程序拥有合法的下载、使用及再分发授权。
 
 运行时产生的项目数据、用户自定义图标、背景图、日志和配置也不会纳入版本控制。
 
@@ -28,7 +28,9 @@ MPL-2.0 是按文件生效的弱 Copyleft 许可证：当你修改并分发本�
 - 批量移动、复制或删除项目。
 - 背景图片历史记录与自动清理未使用图片。
 - 内置 Markdown 使用教程与公告占位；公告可选从官方 GitHub 地址拉取并在离线时回退本地内容。
+- 本地工具资源包的 ZIP 清单、路径和 SHA-256 完整性校验。
 - Windows NSIS 安装包的 GitHub Releases 检查、下载与重启安装更新能力。
+- Windows 定时启动、全局快捷键、快捷轮盘与运行日志导出。
 
 ## 本地开发
 
@@ -51,7 +53,13 @@ npm run build
 npm run package:win
 ```
 
-首次正式发布前，在 [`runtime-template/config/online-services.json`](runtime-template/config/online-services.json) 填入官方 GitHub 仓库的 `owner` 与 `repo`，并为发行包配置 Windows 代码签名。未填入仓库信息时，软件更新界面会安全地保持禁用状态。
+构建独立本地工具资源包：
+
+```powershell
+npm run package:tools
+```
+
+发布时先构建工具资源包，得到 ZIP 与 SHA-256；再将其 GitHub Release 下载地址、哈希和版本写入 [`runtime-template/config/online-services.json`](runtime-template/config/online-services.json)，最后构建 NSIS 安装包。更新器仅适用于正式 NSIS 安装版；未签名安装程序可能触发 Windows SmartScreen 提示。
 
 ## 项目结构
 
@@ -60,7 +68,7 @@ apps/desktop/             Electron 主进程、预加载脚本与前端
 runtime-template/         首次运行时初始化的默认运行时数据
 docs/                     设计文档
 scripts/                  打包脚本
-tools/                    用户本地工具目录（不纳入 Git）
+tools/                    本地工具资源包构建输入（不纳入 Git）
 ```
 
 ## 免责声明

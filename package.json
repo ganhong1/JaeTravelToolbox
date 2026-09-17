@@ -1,6 +1,6 @@
 {
   "name": "jae-travel-toolbox",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.1",
   "license": "MPL-2.0",
   "private": true,
   "type": "module",
@@ -12,8 +12,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "package:win": "npm run build && electron-builder --win nsis --x64 --config.directories.output=release/installer",
-    "package:win:portable": "npm run build && electron-builder --win portable --x64 --config.directories.output=release/program-only",
-    "package:win:bundle": "node scripts/package-windows.cjs",
+    "package:tools": "node scripts/package-tools-pack.cjs",
     "build:default-source": "node scripts/rebuild-default-source.cjs",
     "logs:pretty": "pino-pretty"
   },
@@ -49,15 +48,6 @@
       "dist/renderer/**/*",
       "runtime-template/**/*",
       "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "tools",
-        "to": "tools",
-        "filter": [
-          "**/*"
-        ]
-      }
     ],
     "win": {
       "target": [

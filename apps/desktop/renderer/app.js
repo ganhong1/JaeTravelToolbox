@@ -97,6 +97,10 @@ const checkUpdateButton = document.querySelector('#check-update');
 const openUpdatePageButton = document.querySelector('#open-update-page');
 const downloadUpdateButton = document.querySelector('#download-update');
 const installUpdateButton = document.querySelector('#install-update');
+const toolPackDialog = document.querySelector('#tool-pack-dialog');
+const toolPackStatus = document.querySelector('#tool-pack-status');
+const toolPackDetail = document.querySelector('#tool-pack-detail');
+const downloadToolPackButton = document.querySelector('#download-tool-pack');
 const batchToolbar = document.querySelector('#batch-toolbar');
 const batchSelectedCount = document.querySelector('#batch-selected-count');
 const batchMoveDialog = document.querySelector('#batch-move-dialog');
@@ -972,6 +976,16 @@ createForm.addEventListener('submit', async (event) => {
 document.querySelector('#add-item').addEventListener('click', openCreateDialog);
 document.querySelector('#add-item-card').addEventListener('click', openCreateDialog);
 document.querySelector('#custom-background').addEventListener('click', () => openBackgroundDialog().catch(() => showToast('背景设置读取失败。')));
+document.querySelector('#manage-tool-pack').addEventListener('click', () => openToolPackDialog().catch((error) => showToast(`工具资源包状态读取失败：${error.message || '请重试。'}`)));
+document.querySelector('#close-tool-pack').addEventListener('click', () => toolPackDialog.close());
+document.querySelector('#choose-tool-pack').addEventListener('click', async () => {
+  try { const selection = await window.toolbox.chooseToolPack(); if (!selection) return; toolPackStatus.textContent = '正在校验并安装工具资源包…'; const status = await window.toolbox.installToolPack(selection.sourcePath); renderToolPackStatus(status); showToast('工具资源包已安装。'); }
+  catch (error) { await refreshToolPackStatus().catch(() => {}); showToast(`工具资源包安装失败：${error.message || '请检查文件。'}`); }
+});
+downloadToolPackButton.addEventListener('click', async () => {
+  try { downloadToolPackButton.disabled = true; toolPackStatus.textContent = '正在下载、校验并安装工具资源包…'; const status = await window.toolbox.downloadToolPack(); renderToolPackStatus(status); showToast('工具资源包已下载并安装。'); }
+  catch (error) { await refreshToolPackStatus().catch(() => {}); showToast(`工具资源包下载失败：${error.message || '请稍后重试。'}`); }
+});
 document.querySelector('#manage-update').addEventListener('click', () => openUpdateDialog().catch((error) => showToast(`更新设置读取失败：${error.message || '请重试。'}`)));
 document.querySelector('#view-runtime-logs').addEventListener('click', () => openRuntimeLogDialog());
 document.querySelector('#close-runtime-logs').addEventListener('click', () => runtimeLogDialog.close());
@@ -1234,6 +1248,16 @@ async function openUpdateDialog() {
   renderUpdateState(state);
   updateDialog.showModal();
 }
+function renderToolPackStatus(status) {
+  if (status.installed) toolPackStatus.textContent = `已安装官方工具资源包 ${status.installedVersion}（${status.fileCount} 个文件）。`;
+  else if (status.managed) toolPackStatus.textContent = '已安装的工具资源包不完整；可重新安装进行修复。';
+  else toolPackStatus.textContent = '尚未安装官方工具资源包；默认本地工具暂不可启动。';
+  toolPackDetail.textContent = status.downloadConfigured ? `可下载官方资源包${status.availableVersion ? ` ${status.availableVersion}` : ''}；应用更新不会覆盖已安装的工具。` : '官方在线资源包尚未配置。你可从 GitHub Releases 下载 ZIP 后，在此选择本地文件安装。';
+  downloadToolPackButton.disabled = !status.downloadConfigured;
+  downloadToolPackButton.textContent = status.installed ? '下载并更新' : '下载并安装';
+}
+async function refreshToolPackStatus() { const status = await window.toolbox.getToolPackStatus(); renderToolPackStatus(status); return status; }
+async function openToolPackDialog() { setSettingsMenu(false); await refreshToolPackStatus(); toolPackDialog.showModal(); }
 renderGuide();
 document.querySelector('#open-guide').addEventListener('click', () => guideDialog.showModal());
 document.querySelector('#close-guide').addEventListener('click', () => guideDialog.close());

@@ -4,6 +4,8 @@ const { pathToFileURL } = require('node:url')
 const fs = require('node:fs/promises')
 const fsStream = require('node:fs')
 const crypto = require('node:crypto')
+const { Readable, Transform } = require('node:stream')
+const { pipeline } = require('node:stream/promises')
 const { createRuntimeLogger } = require('./logger.cjs')
 const { ZipArchive } = require('archiver')
 const unzipper = require('unzipper')
@@ -39,6 +41,7 @@ const customImagesDir = () => path.join(dataRoot(), 'static', 'images', 'custom'
 const backgroundsDir = () => path.join(customImagesDir(), 'backgrounds')
 const backgroundFile = () => config('background.json')
 const updateSettingsFile = () => config('update-settings.json')
+const toolPackStateFile = () => config('tool-pack.json')
 const announcementCacheFile = () => config('announcement-cache.json')
 const announcementStateFile = () => config('announcement-state.json')
 const onlineServicesFile = () => template('config', 'online-services.json')
@@ -105,12 +108,13 @@ function normalizeUpdateSettings(value) {
 async function updateSettings() { return normalizeUpdateSettings(await readJson(updateSettingsFile(), {})) }
 async function saveUpdateSettings(value) { const settings = normalizeUpdateSettings(value); await writeJson(updateSettingsFile(), settings); if (updaterAvailable()) { autoUpdater.autoDownload = settings.autoDownload; autoUpdater.autoInstallOnAppQuit = settings.autoInstallOnQuit } return settings }
 async function officialOnlineServices() {
-  const fallback = { version: 1, announcement: { url: '', timeoutSeconds: 8 }, updater: { provider: 'github', owner: '', repo: '', channel: 'latest' } }
+  const fallback = { version: 1, announcement: { url: '', timeoutSeconds: 8 }, updater: { provider: 'github', owner: '', repo: '', channel: 'latest' }, toolPack: { url: '', sha256: '', version: '', maxSizeMiB: 2048 } }
   const configured = await readJson(onlineServicesFile(), fallback)
   return {
     version: 1,
     announcement: { url: /^https:\/\//i.test(configured?.announcement?.url || '') ? configured.announcement.url : '', timeoutSeconds: Math.max(3, Math.min(20, Number(configured?.announcement?.timeoutSeconds) || 8)) },
     updater: { provider: 'github', owner: String(configured?.updater?.owner || '').trim(), repo: String(configured?.updater?.repo || '').trim(), channel: String(configured?.updater?.channel || 'latest').trim() || 'latest' },
+    toolPack: { url: /^https:\/\//i.test(configured?.toolPack?.url || '') ? configured.toolPack.url : '', sha256: /^[a-f0-9]{64}$/i.test(configured?.toolPack?.sha256 || '') ? configured.toolPack.sha256.toLowerCase() : '', version: String(configured?.toolPack?.version || '').trim().slice(0, 64), maxSizeMiB: Math.max(64, Math.min(4096, Number(configured?.toolPack?.maxSizeMiB) || 2048)) },
   }
 }
 function updaterAvailable() { return app.isPackaged && !process.env.PORTABLE_EXECUTABLE_DIR && updateState.supported === true }
@@ -213,7 +217,7 @@ function normalizeOrder(value) { return [...new Set((Array.isArray(value) ? valu
 async function storedItemIds(sourceId) { const entries = await fs.readdir(itemsDir(sourceId), { withFileTypes: true }).catch((error) => error.code === 'ENOENT' ? [] : Promise.reject(error)); return entries.filter((entry) => entry.isFile() && /^[0-9A-HJKMNP-TV-Z]{26}\.json$/i.test(entry.name)).map((entry) => path.basename(entry.name, '.json')).sort() }
 async function completeItemOrder(sourceId) { const ids = await storedItemIds(sourceId); const known = new Set(ids); const saved = normalizeOrder((await readJson(itemOrderFile(sourceId), { order: [] })).order); const savedSet = new Set(saved); return [...saved.filter((id) => known.has(id)), ...ids.filter((id) => !savedSet.has(id))] }
 async function saveItemOrder(sourceId, ids) { await requireSource(sourceId); const order = normalizeOrder((ids || []).map(assertItem)); const known = new Set(await storedItemIds(sourceId)); if (order.length !== known.size || order.some((id) => !known.has(id))) throw new Error('排序项目与当前配置源不一致，请刷新后重试。'); await writeJson(itemOrderFile(sourceId), { version: 1, order }); runtimeLog.info('items.order_saved', { sourceId, itemCount: order.length }); return order }
-function resolveLocalTarget(target) { const value = String(target || '').trim(); const userCandidate = path.resolve(dataRoot(), value); return fs.access(userCandidate).then(() => userCandidate).catch(() => { const candidate = path.resolve(root(), value); return fs.access(candidate).then(() => candidate).catch(() => { const packaged = app.isPackaged ? path.resolve(process.resourcesPath, value) : candidate; return fs.access(packaged).then(() => packaged) }) }) }
+function resolveLocalTarget(target) { const value = String(target || '').trim(); const userCandidate = path.resolve(dataRoot(), value); return fs.access(userCandidate).then(() => userCandidate).catch(() => { const candidate = path.resolve(root(), value); return fs.access(candidate).then(() => candidate).catch(() => { const packaged = app.isPackaged ? path.resolve(process.resourcesPath, value) : candidate; return fs.access(packaged).then(() => packaged).catch(() => { if (/^tools[\\/]/i.test(value)) throw new ToolPackError('TOOL_PACK_REQUIRED', '该本地工具需要安装“官方工具资源包”，请在设置中完成安装。'); throw new Error('找不到本地启动路径，请检查项目设置。') }) }) }) }
 function launchElevated(target) { return new Promise((resolve, reject) => { const child = require('node:child_process').spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "$launchTarget = [Environment]::GetEnvironmentVariable('JAE_TOOLBOX_LAUNCH_TARGET', 'Process'); Start-Process -FilePath $launchTarget -Verb RunAs -ErrorAction Stop"], { windowsHide: true, env: { ...process.env, JAE_TOOLBOX_LAUNCH_TARGET: target } }); let error = ''; child.stderr.on('data', (chunk) => { error += chunk.toString() }); child.on('error', reject); child.on('close', (code) => code === 0 ? resolve() : reject(new Error(error || '管理员启动已取消或失败。'))) }) }
 function runCustomCommand(command) { if (process.platform !== 'win32') throw new Error('自定义命令启动目前仅支持 Windows。'); const text = String(command || '').trim(); if (!text) throw new Error('自定义命令不能为空。'); if (text.length > 4096) throw new Error('自定义命令长度不能超过 4096 个字符。'); return new Promise((resolve, reject) => { const child = require('node:child_process').spawn('cmd.exe', ['/d', '/s', '/c', text], { cwd: dataRoot(), windowsHide: true }); let error = ''; child.stderr.on('data', (chunk) => { error += chunk.toString() }); child.on('error', reject); child.on('close', (code) => code === 0 ? resolve() : reject(new Error(error || '自定义命令执行失败。'))) }) }
 function command(program, args) { return new Promise((resolve, reject) => { const child = require('node:child_process').spawn(program, args, { windowsHide: true }); let error = ''; child.stderr.on('data', (data) => { error += data }); child.on('error', reject); child.on('close', (code) => code === 0 ? resolve() : reject(new Error(error || `${program} 执行失败。`))) }) }
@@ -416,7 +420,8 @@ async function readBundledDefaultArchive() {
   const files = new Map(archive.files.filter((entry) => entry.type === 'File').map((entry) => [entry.path, entry]))
   const manifestEntry = files.get('manifest.json'); const categoriesEntry = files.get('categories.json')
   if (!manifestEntry || !categoriesEntry) throw new Error('内置默认配置源缺少必要文件。')
-  const manifest = JSON.parse((await manifestEntry.buffer()).toString('utf8'))
+  let manifest
+  try { manifest = JSON.parse((await manifestEntry.buffer()).toString('utf8')) } catch { throw new Error('内置默认配置源清单无法解析。') }
   const importedCategories = JSON.parse((await categoriesEntry.buffer()).toString('utf8'))
   const itemEntries = [...files.entries()].filter(([name]) => /^items\/[0-9A-HJKMNP-TV-Z]{26}\.json$/i.test(name))
   if (manifest.version !== 1 || manifest.itemCount !== itemEntries.length || itemEntries.length > 5000) throw new Error('内置默认配置源版本或项目数量无效。')
@@ -548,6 +553,94 @@ async function migrateLegacyWheelLayout() {
   const sourceId = typeof legacy.sourceId === 'string' ? legacy.sourceId : defaultSourceId
   if (!(await readJson(wheelLayoutFile(sourceId), null))) await saveWheelLayout(sourceId, legacy.wheelSlots)
   await writeJson(shortcutsFile(), normalizeShortcuts(legacy))
+}
+class ToolPackError extends Error {
+  constructor(code, message) { super(message); this.name = 'ToolPackError'; this.code = code }
+}
+async function sha256File(file) {
+  const hash = crypto.createHash('sha256')
+  await new Promise((resolve, reject) => { const input = fsStream.createReadStream(file); input.on('error', reject); input.on('end', resolve); input.on('data', (chunk) => hash.update(chunk)) })
+  return hash.digest('hex')
+}
+async function relativeFiles(directory, prefix = '') {
+  const result = []
+  for (const entry of await fs.readdir(directory, { withFileTypes: true }).catch((error) => error.code === 'ENOENT' ? [] : Promise.reject(error))) {
+    const relative = path.posix.join(prefix, entry.name); const absolute = path.join(directory, entry.name)
+    if (entry.isDirectory()) result.push(...await relativeFiles(absolute, relative))
+    else if (entry.isFile()) result.push(relative)
+  }
+  return result
+}
+function validToolPackPath(value) { return typeof value === 'string' && /^tools\/(?:[^\\/:*?"<>|]+\/)*[^\\/:*?"<>|]+$/i.test(value) && !value.includes('..') }
+async function toolPackStatus() {
+  const [state, services, files] = await Promise.all([readJson(toolPackStateFile(), null), officialOnlineServices(), relativeFiles(path.join(dataRoot(), 'tools'), 'tools')])
+  const expected = Array.isArray(state?.files) ? state.files.filter(validToolPackPath) : []
+  const installed = Boolean(state?.version && expected.length && expected.length === files.length && expected.every((file) => files.includes(file)))
+  return { installed, installedVersion: installed ? state.version : '', fileCount: files.length, managed: Boolean(state?.version), downloadConfigured: Boolean(services.toolPack.url && services.toolPack.sha256), availableVersion: services.toolPack.version, releaseUrl: services.updater.owner && services.updater.repo ? `https://github.com/${services.updater.owner}/${services.updater.repo}/releases` : '' }
+}
+async function readToolPackManifest(archive) {
+  const files = new Map(archive.files.filter((entry) => entry.type === 'File').map((entry) => [entry.path, entry]))
+  const manifestEntry = files.get('manifest.json')
+  if (!manifestEntry) throw new ToolPackError('MANIFEST_MISSING', '工具资源包缺少 manifest.json。')
+  let manifest
+  try { manifest = JSON.parse((await manifestEntry.buffer()).toString('utf8')) } catch { throw new ToolPackError('MANIFEST_INVALID', '工具资源包清单无法解析。') }
+  const listed = Array.isArray(manifest?.files) ? manifest.files : []
+  if (manifest?.version !== 1 || !manifest?.packageId || !listed.length || listed.length > 10000) throw new ToolPackError('MANIFEST_INVALID', '工具资源包清单无效。')
+  const names = listed.map((entry) => entry?.path)
+  if (new Set(names).size !== names.length || names.some((name) => !validToolPackPath(name))) throw new ToolPackError('PATH_INVALID', '工具资源包包含不安全的文件路径。')
+  const totalBytes = listed.reduce((sum, entry) => sum + (Number.isSafeInteger(entry?.size) && entry.size >= 0 ? entry.size : -1), 0)
+  if (totalBytes < 0 || !Number.isSafeInteger(totalBytes) || Number(manifest.totalBytes) !== totalBytes) throw new ToolPackError('MANIFEST_INVALID', '工具资源包清单中的文件大小无效。')
+  if (files.size !== listed.length + 1 || [...files.keys()].some((name) => name !== 'manifest.json' && !names.includes(name))) throw new ToolPackError('CONTENTS_INVALID', '工具资源包内容与清单不一致。')
+  return { files, manifest, listed }
+}
+async function installToolPackArchive(sourcePath, expectedDigest = '') {
+  const source = path.resolve(sourcePath); const info = await fs.stat(source).catch(() => null)
+  if (!info?.isFile() || info.size <= 0) throw new ToolPackError('ARCHIVE_MISSING', '找不到工具资源包文件。')
+  const services = await officialOnlineServices(); const maximum = services.toolPack.maxSizeMiB * 1024 * 1024
+  if (info.size > maximum) throw new ToolPackError('ARCHIVE_TOO_LARGE', `工具资源包超过 ${services.toolPack.maxSizeMiB} MiB 上限。`)
+  const digest = await sha256File(source)
+  if (expectedDigest && digest !== expectedDigest) throw new ToolPackError('CHECKSUM_MISMATCH', '工具资源包校验失败，请重新下载。')
+  let archive
+  try { archive = await unzipper.Open.file(source) } catch { throw new ToolPackError('ARCHIVE_INVALID', '工具资源包不是有效的 ZIP 文件。') }
+  const { files, manifest, listed } = await readToolPackManifest(archive)
+  if (Number(manifest.totalBytes) > maximum) throw new ToolPackError('ARCHIVE_TOO_LARGE', `工具资源包解压后超过 ${services.toolPack.maxSizeMiB} MiB 上限。`)
+  const currentState = await readJson(toolPackStateFile(), null); const toolsDirectory = path.join(dataRoot(), 'tools')
+  const currentFiles = await relativeFiles(toolsDirectory, 'tools')
+  const managedFiles = Array.isArray(currentState?.files) ? currentState.files.filter(validToolPackPath) : []
+  if (currentFiles.length && (!managedFiles.length || currentFiles.length !== managedFiles.length || currentFiles.some((file) => !managedFiles.includes(file)))) throw new ToolPackError('TOOLS_DIRECTORY_OCCUPIED', '检测到 tools 目录中存在未由工具箱管理的文件；为保护你的文件，已取消安装。')
+  const staging = path.join(dataRoot(), `.tool-pack-${crypto.randomUUID()}`); const stagedTools = path.join(staging, 'tools'); const backup = path.join(dataRoot(), `.tool-pack-backup-${crypto.randomUUID()}`)
+  try {
+    for (const descriptor of listed) {
+      const entry = files.get(descriptor.path); const output = path.resolve(staging, descriptor.path)
+      if (!entry || !output.startsWith(`${staging}${path.sep}`) || Number(descriptor.size) !== entry.uncompressedSize) throw new ToolPackError('CONTENTS_INVALID', '工具资源包中的文件校验失败。')
+      await fs.mkdir(path.dirname(output), { recursive: true })
+      const hash = crypto.createHash('sha256'); const verifier = new Transform({ transform(chunk, _encoding, callback) { hash.update(chunk); callback(null, chunk) } })
+      await pipeline(entry.stream(), verifier, fsStream.createWriteStream(output))
+      if (!/^[a-f0-9]{64}$/i.test(descriptor.sha256 || '') || hash.digest('hex') !== descriptor.sha256.toLowerCase()) throw new ToolPackError('FILE_CHECKSUM_MISMATCH', `工具资源包中的文件校验失败：${path.basename(descriptor.path)}`)
+    }
+    if (currentFiles.length) await fs.rename(toolsDirectory, backup)
+    await fs.rename(stagedTools, toolsDirectory)
+    await writeJson(toolPackStateFile(), { version: 1, packageId: manifest.packageId, version: String(manifest.appVersion || manifest.version), installedAt: new Date().toISOString(), archiveSha256: digest, files: listed.map((entry) => entry.path) })
+    await fs.rm(backup, { recursive: true, force: true }); runtimeLog.info('tool_pack.installed', { version: String(manifest.appVersion || manifest.version), fileCount: listed.length }); return toolPackStatus()
+  } catch (error) {
+    if (!(await fs.stat(toolsDirectory).catch(() => null)) && await fs.stat(backup).catch(() => null)) await fs.rename(backup, toolsDirectory).catch(() => {})
+    runtimeLog.error('tool_pack.install_failed', { code: error?.code || 'UNEXPECTED', error }); throw error
+  } finally { await fs.rm(staging, { recursive: true, force: true }).catch(() => {}); await fs.rm(backup, { recursive: true, force: true }).catch(() => {}) }
+}
+async function downloadToolPack() {
+  const services = await officialOnlineServices(); const settings = services.toolPack
+  if (!settings.url || !settings.sha256) throw new ToolPackError('DOWNLOAD_UNAVAILABLE', '官方工具资源包尚未发布，请前往 Releases 下载后选择本地文件安装。')
+  const temporary = path.join(dataRoot(), `tool-pack-${crypto.randomUUID()}.zip`); const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 10 * 60 * 1000)
+  try {
+    const response = await fetch(settings.url, { signal: controller.signal })
+    if (!response.ok || !response.body) throw new ToolPackError('DOWNLOAD_FAILED', '下载工具资源包失败，请稍后重试。')
+    const declaredSize = Number(response.headers.get('content-length') || 0); const limit = settings.maxSizeMiB * 1024 * 1024
+    if (declaredSize && declaredSize > limit) throw new ToolPackError('ARCHIVE_TOO_LARGE', `工具资源包超过 ${settings.maxSizeMiB} MiB 上限。`)
+    let downloaded = 0; const limiter = new Transform({ transform(chunk, _encoding, callback) { downloaded += chunk.length; callback(downloaded > limit ? new ToolPackError('ARCHIVE_TOO_LARGE', `工具资源包超过 ${settings.maxSizeMiB} MiB 上限。`) : null, chunk) } })
+    await pipeline(Readable.fromWeb(response.body), limiter, fsStream.createWriteStream(temporary))
+    return await installToolPackArchive(temporary, settings.sha256)
+  } catch (error) { runtimeLog.warning('tool_pack.download_failed', { code: error?.code || 'UNEXPECTED', error }); throw error }
+  finally { clearTimeout(timer); await fs.rm(temporary, { force: true }).catch(() => {}) }
 }
 async function launchTarget(target, options = {}) {
   const targetType = /^https?:\/\//i.test(target) ? 'web' : 'local'
@@ -720,6 +813,10 @@ ipcMain.handle('toolbox:get-shortcuts', async () => { const settings = await sho
   ipcMain.on('toolbox:wheel-hide', () => wheelWindow?.hide())
   ipcMain.handle('toolbox:choose-item-image', async (event) => { const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { title: '选择项目图标', properties: ['openFile'], filters: [{ name: '图片或图标文件', extensions: [...imageExtensions].map((ext) => ext.slice(1)) }] }); return result.canceled || !result.filePaths[0] ? null : { sourcePath: result.filePaths[0], previewUrl: await imageData(result.filePaths[0]) } })
   ipcMain.handle('toolbox:choose-config-import', async (event) => { const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { title: '选择 .attconfig 配置包', properties: ['openFile'], filters: [{ name: '阿洁的旅行工具箱配置', extensions: ['attconfig'] }] }); return result.canceled || !result.filePaths[0] ? null : { sourcePath: result.filePaths[0], fileName: path.basename(result.filePaths[0]) } })
+  ipcMain.handle('toolbox:get-tool-pack-status', () => toolPackStatus())
+  ipcMain.handle('toolbox:choose-tool-pack', async (event) => { const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { title: '选择工具资源包', properties: ['openFile'], filters: [{ name: '阿洁的旅行工具资源包', extensions: ['zip'] }] }); return result.canceled || !result.filePaths[0] ? null : { sourcePath: result.filePaths[0], fileName: path.basename(result.filePaths[0]) } })
+  ipcMain.handle('toolbox:install-tool-pack', (_event, sourcePath) => installToolPackArchive(sourcePath))
+  ipcMain.handle('toolbox:download-tool-pack', () => downloadToolPack())
   ipcMain.handle('toolbox:import-config', (_event, payload) => importConfig(payload || {}))
   ipcMain.handle('toolbox:export-source', (event, sourceId) => exportSource(sourceId, event.sender))
   ipcMain.handle('toolbox:list-sources', () => sources()); ipcMain.handle('toolbox:create-source', (_event, payload) => createSource(payload || {})); ipcMain.handle('toolbox:switch-source', (_event, id) => switchSource(id)); ipcMain.handle('toolbox:delete-source', (_event, id) => deleteSource(id)); ipcMain.handle('toolbox:list-categories', (_event, id) => categories(id)); ipcMain.handle('toolbox:save-categories', (_event, id, list) => saveCategories(id, list)); ipcMain.handle('toolbox:list-items', (_event, id) => listItems(id)); ipcMain.handle('toolbox:save-item-order', (_event, sourceId, ids) => saveItemOrder(sourceId, ids)); ipcMain.handle('toolbox:save-item', (_event, payload) => saveItem(payload || {})); ipcMain.handle('toolbox:delete-item', (_event, sourceId, id) => deleteItem(sourceId, id)); ipcMain.handle('toolbox:bulk-update-items', (_event, payload) => bulkUpdateItems(payload || {})); ipcMain.handle('toolbox:import-item-to-source', (_event, payload) => importItem(payload || {}))

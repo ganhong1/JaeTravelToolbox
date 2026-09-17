@@ -71,6 +71,7 @@
               <button id="manage-batch" type="button">批量管理</button>
               <button id="manage-sources" type="button">配置源设置</button>
               <button id="custom-background" type="button">自定义背景图片</button>
+              <button id="manage-tool-pack" type="button">本地工具资源包</button>
               <button id="manage-update" type="button">软件更新</button>
               <button id="view-runtime-logs" type="button">查看运行日志</button>
               <button class="settings-primary" id="add-item" type="button">＋ 添加项目</button>
@@ -348,6 +349,9 @@
 
     <dialog class="edit-dialog update-dialog" id="update-dialog" aria-labelledby="update-dialog-title">
       <section class="guide-shell"><header class="dialog-header"><div><p class="eyebrow">GitHub Releases</p><h2 id="update-dialog-title">软件更新</h2></div><button class="icon-button" id="close-update" type="button" aria-label="关闭软件更新">×</button></header><div class="update-content"><p class="update-version">当前版本 <strong id="update-current-version">—</strong></p><p class="update-status" id="update-status">正在读取更新状态。</p><article id="update-notes" class="guide-content update-notes"></article><fieldset class="update-options"><legend>更新偏好</legend><label><input id="update-check-on-launch" type="checkbox" /> 启动时检查更新</label><label><input id="update-auto-download" type="checkbox" /> 发现新版本后自动下载</label><label><input id="update-auto-install" type="checkbox" /> 退出旅行箱时自动安装已下载更新</label></fieldset></div><footer class="dialog-footer"><p class="field-hint" id="update-source-hint">官方更新资源仅来自 GitHub Releases。</p><div class="dialog-actions"><button class="tool-button" id="save-update-settings" type="button">保存偏好</button><button class="tool-button" id="check-update" type="button">检查更新</button><button class="tool-button" id="open-update-page" type="button" hidden>打开 Releases</button><button class="primary-button" id="download-update" type="button" hidden>下载更新</button><button class="primary-button" id="install-update" type="button" hidden>重启并安装</button></div></footer></section>
+    </dialog>
+    <dialog class="edit-dialog update-dialog" id="tool-pack-dialog" aria-labelledby="tool-pack-dialog-title">
+      <section class="guide-shell"><header class="dialog-header"><div><p class="eyebrow">官方本地工具</p><h2 id="tool-pack-dialog-title">本地工具资源包</h2></div><button class="icon-button" id="close-tool-pack" type="button" aria-label="关闭本地工具资源包">×</button></header><div class="update-content"><p class="update-status" id="tool-pack-status">正在读取工具资源包状态。</p><p class="field-hint" id="tool-pack-detail">资源包独立于安装程序，安装到用户运行数据目录；应用更新不会覆盖它。</p><article class="guide-content update-notes"><p>资源包只包含默认配置中的本地工具，不包含在开源仓库中。安装前会校验压缩包清单、路径与文件哈希；为保护你手动放入 <code>tools</code> 目录的文件，检测到未受工具箱管理的文件时会拒绝覆盖。</p></article></div><footer class="dialog-footer"><p class="field-hint">可从 GitHub Releases 下载 ZIP 后选择本地文件安装；官方地址配置完成后可直接下载。</p><div class="dialog-actions"><button class="tool-button" id="choose-tool-pack" type="button">选择本地资源包</button><button class="primary-button" id="download-tool-pack" type="button">下载并安装</button></div></footer></section>
     </dialog>
 
     <dialog class="edit-dialog runtime-log-dialog" id="runtime-log-dialog" aria-labelledby="runtime-log-dialog-title">
