@@ -125,7 +125,9 @@ async function initializeUpdater() {
   updateState = { ...updateState, supported, provider: 'github', currentVersion: app.getVersion(), releaseUrl: services.updater.owner && services.updater.repo ? `https://github.com/${services.updater.owner}/${services.updater.repo}/releases` : '', phase: supported ? 'idle' : 'unavailable', message: supported ? '尚未检查更新。' : (app.isPackaged ? '当前发行包未配置 GitHub 更新源；自动更新不可用，但不影响正常使用。' : '开发模式不检查更新。'), error: '' }
   if (!supported) return updateState
   const settings = await updateSettings()
-  autoUpdater.setFeedURL({ provider: 'github', owner: services.updater.owner, repo: services.updater.repo, channel: services.updater.channel, releaseType: 'release' })
+  const prereleaseChannel = app.getVersion().includes('-')
+  autoUpdater.allowPrerelease = prereleaseChannel
+  autoUpdater.setFeedURL({ provider: 'github', owner: services.updater.owner, repo: services.updater.repo, channel: services.updater.channel, releaseType: prereleaseChannel ? 'prerelease' : 'release' })
   autoUpdater.autoDownload = settings.autoDownload
   autoUpdater.autoInstallOnAppQuit = settings.autoInstallOnQuit
   autoUpdater.autoRunAppAfterInstall = true
