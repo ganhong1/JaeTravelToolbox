@@ -1,8 +1,8 @@
-# AngelinaTravelToolbox 设计说明
+# JaeTravelToolbox 设计说明
 
 ## 1. 产品定位
 
-阿洁的旅行工具箱（AngelinaTravelToolbox）是一个本地优先的《明日方舟》工具入口管理器。它统一管理本地程序、文件夹、资料和网站；用户可以维护分类、图标、简介、收藏、启动方式与排序。当前发行版优先支持 Windows，工程本身采用可扩展的跨平台桌面架构。
+阿洁的旅行工具箱（JaeTravelToolbox）是一个本地优先的《明日方舟》工具入口管理器。它统一管理本地程序、文件夹、资料和网站；用户可以维护分类、图标、简介、收藏、启动方式与排序。当前发行版优先支持 Windows，工程本身采用可扩展的跨平台桌面架构。
 
 ## 2. 技术架构
 
@@ -39,8 +39,8 @@
 运行目录：
 
 ```text
-AngelinaTravelToolbox/
-├─ AngelinaTravelToolbox.exe
+JaeTravelToolbox/
+├─ JaeTravelToolbox.exe
 ├─ items/<source-id>/
 ├─ static/images/{builtin,custom}/
 ├─ tools/

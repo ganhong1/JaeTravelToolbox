@@ -81,9 +81,20 @@ const updateCurrentVersion = document.querySelector('#update-current-version');
 const updateStatus = document.querySelector('#update-status');
 const updateNotes = document.querySelector('#update-notes');
 const updateSourceHint = document.querySelector('#update-source-hint');
+const runtimeLogDialog = document.querySelector('#runtime-log-dialog');
+const runtimeLogContent = document.querySelector('#runtime-log-content');
+const runtimeLogLevel = document.querySelector('#runtime-log-level');
+const runtimeLogCount = document.querySelector('#runtime-log-count');
+const runtimeLogKeepPosition = document.querySelector('#runtime-log-keep-position');
+let runtimeLogEntries = [];
+let runtimeLogRefreshTimer = null;
+let runtimeLogRefreshInFlight = false;
+const runtimeLogRanks = { DEBUG: 10, INFO: 20, WARNING: 30, ERROR: 40, CRITICAL: 50 };
 const updateCheckOnLaunch = document.querySelector('#update-check-on-launch');
 const updateAutoDownload = document.querySelector('#update-auto-download');
 const updateAutoInstall = document.querySelector('#update-auto-install');
+const checkUpdateButton = document.querySelector('#check-update');
+const openUpdatePageButton = document.querySelector('#open-update-page');
 const downloadUpdateButton = document.querySelector('#download-update');
 const installUpdateButton = document.querySelector('#install-update');
 const batchToolbar = document.querySelector('#batch-toolbar');
@@ -962,6 +973,11 @@ document.querySelector('#add-item').addEventListener('click', openCreateDialog);
 document.querySelector('#add-item-card').addEventListener('click', openCreateDialog);
 document.querySelector('#custom-background').addEventListener('click', () => openBackgroundDialog().catch(() => showToast('背景设置读取失败。')));
 document.querySelector('#manage-update').addEventListener('click', () => openUpdateDialog().catch((error) => showToast(`更新设置读取失败：${error.message || '请重试。'}`)));
+document.querySelector('#view-runtime-logs').addEventListener('click', () => openRuntimeLogDialog());
+document.querySelector('#close-runtime-logs').addEventListener('click', () => runtimeLogDialog.close());
+document.querySelector('#refresh-runtime-logs').addEventListener('click', () => refreshRuntimeLogs());
+runtimeLogLevel.addEventListener('change', () => renderRuntimeLogs());
+document.querySelector('#export-runtime-logs').addEventListener('click', async () => { try { const exported = await window.toolbox.exportRuntimeLogs(); if (exported) showToast(`已导出 ${exported.count} 条运行日志。`); } catch (error) { showToast(`日志导出失败：${error.message || '请稍后重试。'}`); } });
 document.querySelector('#close-update').addEventListener('click', () => updateDialog.close());
 document.querySelector('#save-update-settings').addEventListener('click', async () => {
   try {
@@ -969,9 +985,10 @@ document.querySelector('#save-update-settings').addEventListener('click', async 
     showToast('更新偏好已保存。');
   } catch (error) { showToast(`保存失败：${error.message || '请重试。'}`); }
 });
-document.querySelector('#check-update').addEventListener('click', async () => {
+checkUpdateButton.addEventListener('click', async () => {
   try { renderUpdateState({ ...(await window.toolbox.getUpdateState()), phase: 'checking', message: '正在检查 GitHub Release 更新…' }); await window.toolbox.checkForUpdates(); } catch (error) { showToast(`检查更新失败：${error.message || '请稍后重试。'}`); }
 });
+openUpdatePageButton.addEventListener('click', async () => { const state = await window.toolbox.getUpdateState(); if (state.releaseUrl) await window.toolbox.launch(state.releaseUrl); });
 downloadUpdateButton.addEventListener('click', async () => { try { await window.toolbox.downloadUpdate(); } catch (error) { showToast(`下载更新失败：${error.message || '请稍后重试。'}`); } });
 installUpdateButton.addEventListener('click', async () => { try { await window.toolbox.installUpdate(); } catch (error) { showToast(`安装更新失败：${error.message || '请重试。'}`); } });
 window.toolbox?.onUpdateStatus?.((state) => { renderUpdateState(state); if (state.phase === 'error' && updateDialog.open) showToast(`更新失败：${state.error || '请稍后重试。'}`); });
@@ -1163,12 +1180,51 @@ async function openAnnouncementDialog({ automatic = false } = {}) {
 }
 function renderUpdateState(state) {
   updateCurrentVersion.textContent = state.currentVersion || '—';
-  updateStatus.textContent = state.error ? `${state.message} ${state.error}` : (state.message || '尚未检查更新。');
+  updateStatus.textContent = state.message || '尚未检查更新。';
   updateNotes.innerHTML = DOMPurify.sanitize(marked.parse(state.releaseNotes || '', { gfm: true, breaks: true }));
-  updateSourceHint.textContent = state.supported ? '官方更新资源仅来自 GitHub Releases。' : `${state.message || '当前环境不支持自动更新。'} 可手动前往 GitHub Releases 下载完整安装包。`;
+  updateSourceHint.textContent = state.supported ? '官方更新资源仅来自 GitHub Releases；检查超时或失败不会影响工具箱正常使用。' : '此环境不提供自动更新。若后续发行包配置了官方更新源，可在这里检查或前往 Releases 下载。';
+  const unavailable = !state.supported;
+  checkUpdateButton.disabled = unavailable || state.phase === 'checking';
+  openUpdatePageButton.hidden = !state.releaseUrl;
+  updateAutoDownload.disabled = unavailable;
+  updateAutoInstall.disabled = unavailable;
   downloadUpdateButton.hidden = state.phase !== 'available';
   installUpdateButton.hidden = state.phase !== 'downloaded';
 }
+function formatRuntimeLog(entry) {
+  const { time, severity = 'INFO', event = 'runtime.event', msg, ...fields } = entry || {};
+  const detail = Object.keys(fields).length ? ` ${JSON.stringify(fields)}` : '';
+  const date = new Date(time || Date.now());
+  const pad = (value, length = 2) => String(value).padStart(length, '0');
+  const readableTime = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
+  return `${readableTime} [${severity}] ${event || msg}${detail}`;
+}
+function renderRuntimeLogs({ follow = false } = {}) {
+  const minimum = runtimeLogRanks[runtimeLogLevel.value] || runtimeLogRanks.DEBUG;
+  const visible = runtimeLogEntries.filter((entry) => (runtimeLogRanks[entry.severity] || runtimeLogRanks.INFO) >= minimum);
+  const wasAtEnd = runtimeLogContent.scrollHeight - runtimeLogContent.scrollTop - runtimeLogContent.clientHeight < 24;
+  const previousScrollTop = runtimeLogContent.scrollTop;
+  runtimeLogContent.textContent = visible.map(formatRuntimeLog).join('\n') || '暂无符合当前筛选条件的运行日志。';
+  runtimeLogCount.textContent = `显示 ${visible.length} / ${runtimeLogEntries.length} 条`;
+  if (runtimeLogKeepPosition.checked) runtimeLogContent.scrollTop = Math.min(previousScrollTop, runtimeLogContent.scrollHeight);
+  else if (follow || wasAtEnd) runtimeLogContent.scrollTop = runtimeLogContent.scrollHeight;
+}
+async function refreshRuntimeLogs() {
+  if (runtimeLogRefreshInFlight) return;
+  runtimeLogRefreshInFlight = true;
+  runtimeLogCount.textContent = '正在读取日志…';
+  try { runtimeLogEntries = await window.toolbox.getRuntimeLogs(600); renderRuntimeLogs({ follow: true }); }
+  catch (error) { runtimeLogContent.textContent = '运行日志读取失败。'; runtimeLogCount.textContent = error.message || '请稍后重试。'; }
+  finally { runtimeLogRefreshInFlight = false; }
+}
+function startRuntimeLogRefresh() { if (!runtimeLogRefreshTimer) runtimeLogRefreshTimer = setInterval(() => refreshRuntimeLogs(), 2_000); }
+function stopRuntimeLogRefresh() { if (runtimeLogRefreshTimer) clearInterval(runtimeLogRefreshTimer); runtimeLogRefreshTimer = null; }
+async function openRuntimeLogDialog() { setSettingsMenu(false); await refreshRuntimeLogs(); runtimeLogDialog.showModal(); startRuntimeLogRefresh(); }
+runtimeLogDialog.addEventListener('close', stopRuntimeLogRefresh);
+function reportRendererEvent(level, event, context = {}) { window.toolbox?.logRendererEvent?.({ level, event, context }).catch(() => {}); }
+window.toolbox?.onRuntimeLog?.((entry) => { if (!runtimeLogDialog.open) return; runtimeLogEntries = [...runtimeLogEntries, entry].slice(-2000); renderRuntimeLogs({ follow: true }); });
+window.addEventListener('error', (event) => reportRendererEvent('error', 'window_error', { message: event.message, source: event.filename, line: event.lineno, column: event.colno, errorName: event.error?.name }));
+window.addEventListener('unhandledrejection', (event) => reportRendererEvent('error', 'unhandled_rejection', { reason: event.reason instanceof Error ? { name: event.reason.name, message: event.reason.message } : String(event.reason) }));
 async function openUpdateDialog() {
   setSettingsMenu(false);
   const [state, settings] = await Promise.all([window.toolbox.getUpdateState(), window.toolbox.getUpdateSettings()]);

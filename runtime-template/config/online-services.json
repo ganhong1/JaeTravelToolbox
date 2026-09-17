@@ -6,8 +6,8 @@
   },
   "updater": {
     "provider": "github",
-    "owner": "",
-    "repo": "",
+    "owner": "ganhong1",
+    "repo": "JaeTravelToolbox",
     "channel": "latest"
   }
 }
