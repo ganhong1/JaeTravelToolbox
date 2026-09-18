@@ -9,16 +9,22 @@ const { pipeline } = require('node:stream/promises')
 const { createRuntimeLogger } = require('./logger.cjs')
 const { ZipArchive } = require('archiver')
 const unzipper = require('unzipper')
-const { autoUpdater } = require('electron-updater')
+const { autoUpdater, CancellationToken } = require('electron-updater')
 
 const defaultSourceId = 'default'
 const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.ico'])
 const imageMimes = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp', '.ico': 'image/x-icon' }
+const portableDirectory = () => process.env.PORTABLE_EXECUTABLE_DIR ? path.resolve(process.env.PORTABLE_EXECUTABLE_DIR) : ''
 const root = () => {
   if (!app.isPackaged) return app.getAppPath()
-  return process.env.PORTABLE_EXECUTABLE_DIR ? path.resolve(process.env.PORTABLE_EXECUTABLE_DIR) : path.dirname(process.execPath)
+  if (portableDirectory()) return portableDirectory()
+  const executableDirectory = path.dirname(process.execPath)
+  return path.basename(executableDirectory).toLowerCase() === 'app' ? path.dirname(executableDirectory) : executableDirectory
 }
-const dataRoot = () => !app.isPackaged || process.env.PORTABLE_EXECUTABLE_DIR ? root() : app.getPath('userData')
+const legacyUserDataDirectory = app.isPackaged && !portableDirectory() ? app.getPath('userData') : ''
+const managedDataDirectory = app.isPackaged && !portableDirectory() ? path.join(root(), 'data') : root()
+if (app.isPackaged && !portableDirectory()) app.setPath('userData', managedDataDirectory)
+const dataRoot = () => managedDataDirectory
 const template = (...parts) => path.join(app.getAppPath(), 'runtime-template', ...parts)
 const config = (...parts) => path.join(dataRoot(), 'config', ...parts)
 const itemsDir = (sourceId) => path.join(dataRoot(), 'items', sourceId)
@@ -47,8 +53,19 @@ const announcementStateFile = () => config('announcement-state.json')
 const onlineServicesFile = () => template('config', 'online-services.json')
 let updateState = { phase: 'idle', available: false, downloaded: false, version: app.getVersion(), message: '尚未检查更新。', releaseNotes: '' }
 let updateCheckInFlight = null
+let updateDownloadToken = null
+let lastUpdateProgressLogAt = 0
 const UPDATE_CHECK_TIMEOUT_MS = 15_000
+const supportedUpdateSources = new Set(['github-release'])
+const TOOL_PACK_DISCOVERY_TIMEOUT_MS = 12_000
+const TOOL_PACK_DISCOVERY_CACHE_MS = 5 * 60 * 1000
+let toolPackDiscoveryCache = { expiresAt: 0, value: null, pending: null }
+let toolPackDownloadController = null
+let toolPackDownloadPromise = null
+let toolPackDownloadState = { phase: 'idle', progress: 0, transferred: 0, total: 0, bytesPerSecond: 0, message: '尚未开始下载。', error: '' }
+let lastToolPackProgressAt = 0
 const runtimeLog = createRuntimeLogger({ directory: path.join(dataRoot(), 'logs'), appVersion: app.getVersion(), development: !app.isPackaged })
+let legacyDataMigrationWarning = ''
 const logDateStamp = () => new Date().toISOString().slice(0, 10)
 
 function ipcArgumentSummary(args) { return args.map((value) => Array.isArray(value) ? { type: 'array', count: value.length } : value && typeof value === 'object' ? { type: 'object', keys: Object.keys(value).slice(0, 20) } : { type: typeof value }) }
@@ -97,34 +114,79 @@ function registerToolboxAssetProtocol() {
 }
 async function readJson(file, fallback) { try { return JSON.parse(await fs.readFile(file, 'utf8')) } catch (error) { if (error.code === 'ENOENT') return fallback; runtimeLog.error('storage.read_json_failed', { file: path.basename(file), error }); throw error } }
 async function writeJson(file, value) { await fs.mkdir(path.dirname(file), { recursive: true }); const temp = `${file}.tmp`; await fs.writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, 'utf8'); await fs.rename(temp, file); runtimeLog.debug('storage.write_json', { file: path.basename(file) }) }
+async function pathExists(candidate) { try { await fs.access(candidate); return true } catch { return false } }
+async function relativeFileSizes(directory) {
+  const files = new Map()
+  async function visit(current, relative = '') {
+    for (const entry of await fs.readdir(current, { withFileTypes: true })) {
+      const childRelative = relative ? path.join(relative, entry.name) : entry.name
+      const child = path.join(current, entry.name)
+      if (entry.isDirectory()) await visit(child, childRelative)
+      else if (entry.isFile()) files.set(childRelative, (await fs.stat(child)).size)
+    }
+  }
+  await visit(directory)
+  return files
+}
+async function verifyCopiedTree(source, destination) {
+  const [sourceFiles, destinationFiles] = await Promise.all([relativeFileSizes(source), relativeFileSizes(destination)])
+  if (sourceFiles.size !== destinationFiles.size) return false
+  return [...sourceFiles].every(([relative, size]) => destinationFiles.get(relative) === size)
+}
+async function migrateLegacyUserData() {
+  if (!legacyUserDataDirectory || path.resolve(legacyUserDataDirectory) === path.resolve(dataRoot()) || !(await pathExists(legacyUserDataDirectory))) return
+  const persistedDirectories = ['config', 'items', 'static', 'tools']
+  const candidates = []
+  for (const name of persistedDirectories) {
+    const source = path.join(legacyUserDataDirectory, name)
+    if (await pathExists(source)) candidates.push({ name, source, destination: path.join(dataRoot(), name) })
+  }
+  if (!candidates.length) {
+    await fs.rm(legacyUserDataDirectory, { recursive: true, force: true, maxRetries: 3, retryDelay: 250 })
+    runtimeLog.info('runtime.legacy_user_data_removed', { migratedDirectories: 0 })
+    return
+  }
+  try {
+    for (const candidate of candidates) {
+      if (await pathExists(candidate.destination)) throw new Error(`destination_exists:${candidate.name}`)
+      await fs.cp(candidate.source, candidate.destination, { recursive: true, force: false, errorOnExist: true, preserveTimestamps: true })
+      if (!(await verifyCopiedTree(candidate.source, candidate.destination))) throw new Error(`verification_failed:${candidate.name}`)
+    }
+    await fs.rm(legacyUserDataDirectory, { recursive: true, force: true, maxRetries: 3, retryDelay: 250 })
+    runtimeLog.info('runtime.legacy_user_data_migrated', { migratedDirectories: candidates.map((candidate) => candidate.name) })
+  } catch (error) {
+    legacyDataMigrationWarning = '检测到旧版用户数据，但自动迁移未完成。旧数据仍被保留；请关闭程序后重试，避免在两个位置分别修改配置。'
+    runtimeLog.warning('runtime.legacy_user_data_migration_failed', { error })
+  }
+}
 function normalizeUpdateSettings(value) {
   return {
     version: 1,
+    source: supportedUpdateSources.has(value?.source) ? value.source : 'github-release',
     checkOnLaunch: value?.checkOnLaunch !== false,
     autoDownload: Boolean(value?.autoDownload),
     autoInstallOnQuit: Boolean(value?.autoInstallOnQuit),
   }
 }
 async function updateSettings() { return normalizeUpdateSettings(await readJson(updateSettingsFile(), {})) }
-async function saveUpdateSettings(value) { const settings = normalizeUpdateSettings(value); await writeJson(updateSettingsFile(), settings); if (updaterAvailable()) { autoUpdater.autoDownload = settings.autoDownload; autoUpdater.autoInstallOnAppQuit = settings.autoInstallOnQuit } return settings }
+async function saveUpdateSettings(value) { const settings = normalizeUpdateSettings(value); await writeJson(updateSettingsFile(), settings); if (updaterAvailable()) { autoUpdater.autoDownload = settings.autoDownload; autoUpdater.autoInstallOnAppQuit = settings.autoInstallOnQuit } runtimeLog.info('updater.settings_saved', { source: settings.source, checkOnLaunch: settings.checkOnLaunch, autoDownload: settings.autoDownload, autoInstallOnQuit: settings.autoInstallOnQuit }); return settings }
 async function officialOnlineServices() {
-  const fallback = { version: 1, announcement: { url: '', timeoutSeconds: 8 }, updater: { provider: 'github', owner: '', repo: '', channel: 'latest' }, toolPack: { url: '', sha256: '', version: '', maxSizeMiB: 2048 } }
+  const fallback = { version: 1, announcement: { url: '', timeoutSeconds: 8 }, updater: { provider: 'github', owner: '', repo: '', channel: 'latest' }, toolPack: { provider: 'github-release', channel: 'auto', maxSizeMiB: 2048 } }
   const configured = await readJson(onlineServicesFile(), fallback)
   return {
     version: 1,
     announcement: { url: /^https:\/\//i.test(configured?.announcement?.url || '') ? configured.announcement.url : '', timeoutSeconds: Math.max(3, Math.min(20, Number(configured?.announcement?.timeoutSeconds) || 8)) },
     updater: { provider: 'github', owner: String(configured?.updater?.owner || '').trim(), repo: String(configured?.updater?.repo || '').trim(), channel: String(configured?.updater?.channel || 'latest').trim() || 'latest' },
-    toolPack: { url: /^https:\/\//i.test(configured?.toolPack?.url || '') ? configured.toolPack.url : '', sha256: /^[a-f0-9]{64}$/i.test(configured?.toolPack?.sha256 || '') ? configured.toolPack.sha256.toLowerCase() : '', version: String(configured?.toolPack?.version || '').trim().slice(0, 64), maxSizeMiB: Math.max(64, Math.min(4096, Number(configured?.toolPack?.maxSizeMiB) || 2048)) },
+    toolPack: { provider: configured?.toolPack?.provider === 'github-release' ? 'github-release' : '', channel: ['auto', 'stable', 'beta'].includes(configured?.toolPack?.channel) ? configured.toolPack.channel : 'auto', maxSizeMiB: Math.max(64, Math.min(4096, Number(configured?.toolPack?.maxSizeMiB) || 2048)) },
   }
 }
 function updaterAvailable() { return app.isPackaged && !process.env.PORTABLE_EXECUTABLE_DIR && updateState.supported === true }
-function publishUpdateState(patch) { updateState = { ...updateState, ...patch }; runtimeLog.info('updater.state_changed', { phase: updateState.phase, available: Boolean(updateState.available), downloaded: Boolean(updateState.downloaded), version: updateState.version || '' }); if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('toolbox:update-status', updateState) }
+function publishUpdateState(patch) { updateState = { ...updateState, ...patch }; if (updateState.phase !== 'downloading') runtimeLog.info('updater.state_changed', { phase: updateState.phase, available: Boolean(updateState.available), downloaded: Boolean(updateState.downloaded), version: updateState.version || '' }); if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('toolbox:update-status', updateState) }
 async function initializeUpdater() {
   const services = await officialOnlineServices()
-  const supported = app.isPackaged && !process.env.PORTABLE_EXECUTABLE_DIR && Boolean(services.updater.owner && services.updater.repo)
-  updateState = { ...updateState, supported, provider: 'github', currentVersion: app.getVersion(), releaseUrl: services.updater.owner && services.updater.repo ? `https://github.com/${services.updater.owner}/${services.updater.repo}/releases` : '', phase: supported ? 'idle' : 'unavailable', message: supported ? '尚未检查更新。' : (app.isPackaged ? '当前发行包未配置 GitHub 更新源；自动更新不可用，但不影响正常使用。' : '开发模式不检查更新。'), error: '' }
+  const settings = await updateSettings(); const supported = app.isPackaged && !process.env.PORTABLE_EXECUTABLE_DIR && settings.source === 'github-release' && Boolean(services.updater.owner && services.updater.repo)
+  updateState = { ...updateState, supported, provider: settings.source, currentVersion: app.getVersion(), releaseUrl: services.updater.owner && services.updater.repo ? `https://github.com/${services.updater.owner}/${services.updater.repo}/releases` : '', phase: supported ? 'idle' : 'unavailable', message: supported ? '尚未检查更新。' : (app.isPackaged ? '当前发行包未配置 GitHub 更新源；自动更新不可用，但不影响正常使用。' : '开发模式不检查更新。'), error: '', progress: 0, transferred: 0, total: 0, bytesPerSecond: 0 }
   if (!supported) return updateState
-  const settings = await updateSettings()
   const prereleaseChannel = app.getVersion().includes('-')
   autoUpdater.allowPrerelease = prereleaseChannel
   autoUpdater.setFeedURL({ provider: 'github', owner: services.updater.owner, repo: services.updater.repo, channel: services.updater.channel, releaseType: prereleaseChannel ? 'prerelease' : 'release' })
@@ -134,8 +196,9 @@ async function initializeUpdater() {
   autoUpdater.on('checking-for-update', () => publishUpdateState({ phase: 'checking', message: '正在检查 GitHub Release 更新…', error: '' }))
   autoUpdater.on('update-available', (info) => publishUpdateState({ phase: 'available', available: true, downloaded: false, version: info.version, releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : '', message: `发现新版本 ${info.version}。`, error: '' }))
   autoUpdater.on('update-not-available', () => publishUpdateState({ phase: 'latest', available: false, downloaded: false, message: '当前已是最新版本。', error: '' }))
-  autoUpdater.on('download-progress', (progress) => publishUpdateState({ phase: 'downloading', progress: Math.round(progress.percent || 0), transferred: progress.transferred || 0, total: progress.total || 0, message: `正在下载更新：${Math.round(progress.percent || 0)}%。`, error: '' }))
+  autoUpdater.on('download-progress', (progress) => { const percent = Math.round(progress.percent || 0); if (Date.now() - lastUpdateProgressLogAt >= 5_000) { lastUpdateProgressLogAt = Date.now(); runtimeLog.info('updater.download_progress', { percent, transferred: progress.transferred || 0, total: progress.total || 0, bytesPerSecond: Math.round(progress.bytesPerSecond || 0) }) }; publishUpdateState({ phase: 'downloading', progress: percent, transferred: progress.transferred || 0, total: progress.total || 0, bytesPerSecond: progress.bytesPerSecond || 0, message: `正在下载更新：${percent}%。`, error: '' }) })
   autoUpdater.on('update-downloaded', (info) => publishUpdateState({ phase: 'downloaded', available: true, downloaded: true, version: info.version, message: `版本 ${info.version} 已下载，重启后即可安装。`, error: '' }))
+  autoUpdater.on('update-cancelled', () => { runtimeLog.info('updater.download_cancelled', { cleanup: 'electron-updater' }); publishUpdateState({ phase: 'available', available: true, downloaded: false, progress: 0, transferred: 0, total: 0, bytesPerSecond: 0, message: '已取消下载，并已清理临时更新文件。', error: '' }) })
   autoUpdater.on('error', (error) => { runtimeLog.warning('updater.operation_failed', { error }); publishUpdateState({ phase: 'error', message: '更新服务暂时不可用；不影响工具箱正常使用。请稍后重试，或前往 Releases 手动下载。', error: '' }) })
   return updateState
 }
@@ -159,7 +222,8 @@ async function checkForUpdates() {
   })()
   try { return await updateCheckInFlight } finally { updateCheckInFlight = null }
 }
-async function downloadUpdate() { if (!updaterAvailable()) throw new Error(updateState.message); if (!updateState.available) throw new Error('当前没有可下载的更新。'); await autoUpdater.downloadUpdate(); return updateState }
+async function downloadUpdate() { if (!updaterAvailable()) throw new Error(updateState.message); if (!updateState.available) throw new Error('当前没有可下载的更新。'); if (updateDownloadToken) return updateState; const cancellationToken = new CancellationToken(); updateDownloadToken = cancellationToken; lastUpdateProgressLogAt = 0; runtimeLog.info('updater.download_started', { version: updateState.version || '' }); publishUpdateState({ phase: 'downloading', progress: 0, transferred: 0, total: 0, bytesPerSecond: 0, message: '正在准备下载更新…', error: '' }); try { await autoUpdater.downloadUpdate(cancellationToken); return updateState } catch (error) { if (cancellationToken.cancelled) { publishUpdateState({ phase: 'available', available: true, downloaded: false, progress: 0, transferred: 0, total: 0, bytesPerSecond: 0, message: '已取消下载，并已清理临时更新文件。', error: '' }); return updateState } runtimeLog.error('updater.download_failed', { error }); throw error } finally { if (updateDownloadToken === cancellationToken) updateDownloadToken = null } }
+function cancelUpdateDownload() { if (!updateDownloadToken) return updateState; runtimeLog.info('updater.download_cancellation_requested', { version: updateState.version || '' }); publishUpdateState({ phase: 'cancelling', message: '正在取消下载并清理临时文件…', error: '' }); updateDownloadToken.cancel(); return updateState }
 function installDownloadedUpdate() { if (!updaterAvailable() || !updateState.downloaded) throw new Error('尚未下载可安装的更新。'); autoUpdater.quitAndInstall(false, true); return { installing: true } }
 async function fetchAnnouncement() {
   const bundledPath = path.join(app.getAppPath(), 'apps', 'desktop', 'renderer', 'content', 'announcement.zh-CN.md')
@@ -574,11 +638,56 @@ async function relativeFiles(directory, prefix = '') {
   return result
 }
 function validToolPackPath(value) { return typeof value === 'string' && /^tools\/(?:[^\\/:*?"<>|]+\/)*[^\\/:*?"<>|]+$/i.test(value) && !value.includes('..') }
+function publishToolPackDownloadState(patch) {
+  toolPackDownloadState = { ...toolPackDownloadState, ...patch }
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('toolbox:tool-pack-download-status', toolPackDownloadState)
+}
+function toolPackDownloadActive() { return ['discovering', 'downloading', 'installing', 'cancelling'].includes(toolPackDownloadState.phase) }
+function parseSemver(value) { const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(String(value || '')); return match ? { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]), prerelease: match[4] || '' } : null }
+function compareSemver(left, right) { const a = parseSemver(left); const b = parseSemver(right); if (!a || !b) return null; for (const key of ['major', 'minor', 'patch']) if (a[key] !== b[key]) return a[key] > b[key] ? 1 : -1; if (a.prerelease === b.prerelease) return 0; if (!a.prerelease) return 1; if (!b.prerelease) return -1; return a.prerelease.localeCompare(b.prerelease, 'en', { numeric: true }) }
+function compatibleToolPack(manifest) { const minimum = compareSemver(app.getVersion(), manifest.minAppVersion); const maximum = manifest.maxAppVersionExclusive ? compareSemver(app.getVersion(), manifest.maxAppVersionExclusive) : -1; return minimum !== null && maximum !== null && minimum >= 0 && maximum < 0 }
+function toolPackChannel(settings) { return settings.channel === 'auto' ? (app.getVersion().includes('-') ? 'beta' : 'stable') : settings.channel }
+function validReleaseManifest(value) { return value?.version === 1 && value?.packageId === 'official-tools' && typeof value?.toolPackVersion === 'string' && parseSemver(value.minAppVersion) && (!value.maxAppVersionExclusive || parseSemver(value.maxAppVersionExclusive)) && ['stable', 'beta'].includes(value.channel) && typeof value?.archive?.name === 'string' && /^[a-f0-9]{64}$/i.test(value?.archive?.sha256 || '') && Number.isSafeInteger(value?.archive?.size) && value.archive.size > 0 }
+async function discoverToolPack(force = false) {
+  if (!force && toolPackDiscoveryCache.value && toolPackDiscoveryCache.expiresAt > Date.now()) return toolPackDiscoveryCache.value
+  if (toolPackDiscoveryCache.pending) return toolPackDiscoveryCache.pending
+  toolPackDiscoveryCache.pending = (async () => {
+    const services = await officialOnlineServices(); const settings = services.toolPack; const channel = toolPackChannel(settings)
+    if (settings.provider !== 'github-release' || !services.updater.owner || !services.updater.repo) return { available: false, reason: 'not_configured' }
+    runtimeLog.info('tool_pack.discovery_started', { channel })
+    const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), TOOL_PACK_DISCOVERY_TIMEOUT_MS)
+    try {
+      const endpoint = `https://api.github.com/repos/${encodeURIComponent(services.updater.owner)}/${encodeURIComponent(services.updater.repo)}/releases?per_page=30`
+      const response = await fetch(endpoint, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'JaeTravelToolbox' }, signal: controller.signal })
+      if (!response.ok) throw new ToolPackError('DISCOVERY_FAILED', '无法查询官方工具资源包发布记录。')
+      const releases = await response.json()
+      if (!Array.isArray(releases)) throw new ToolPackError('DISCOVERY_FAILED', '官方工具资源包发布记录格式无效。')
+      for (const release of releases) {
+        if (release?.draft || Boolean(release?.prerelease) !== (channel === 'beta')) continue
+        const assets = Array.isArray(release.assets) ? release.assets : []
+        for (const asset of assets.filter((entry) => /^JaeTravelToolbox-tools-.+\.json$/i.test(entry?.name || ''))) {
+          const manifestResponse = await fetch(asset.browser_download_url, { headers: { Accept: 'application/json', 'User-Agent': 'JaeTravelToolbox' }, signal: controller.signal })
+          if (!manifestResponse.ok) continue
+          const manifest = await manifestResponse.json().catch(() => null)
+          if (!validReleaseManifest(manifest) || manifest.channel !== channel || !compatibleToolPack(manifest)) continue
+          const archive = assets.find((entry) => entry.name === manifest.archive.name && entry.size === manifest.archive.size && /^https:\/\//i.test(entry.browser_download_url || ''))
+          if (!archive) continue
+          const discovered = { available: true, version: manifest.toolPackVersion, url: archive.browser_download_url, sha256: manifest.archive.sha256.toLowerCase(), size: manifest.archive.size, channel, releaseUrl: release.html_url || '' }
+          runtimeLog.info('tool_pack.discovery_succeeded', { version: discovered.version, channel, size: discovered.size })
+          return discovered
+        }
+      }
+      runtimeLog.info('tool_pack.discovery_empty', { channel }); return { available: false, reason: 'not_found', channel }
+    } catch (error) { runtimeLog.warning('tool_pack.discovery_failed', { code: error?.code || (error?.name === 'AbortError' ? 'timeout' : 'request_failed'), error }); return { available: false, reason: 'failed', channel } }
+    finally { clearTimeout(timer) }
+  })()
+  try { const result = await toolPackDiscoveryCache.pending; toolPackDiscoveryCache = { expiresAt: Date.now() + TOOL_PACK_DISCOVERY_CACHE_MS, value: result, pending: null }; return result } catch (error) { toolPackDiscoveryCache = { expiresAt: 0, value: null, pending: null }; throw error }
+}
 async function toolPackStatus() {
-  const [state, services, files] = await Promise.all([readJson(toolPackStateFile(), null), officialOnlineServices(), relativeFiles(path.join(dataRoot(), 'tools'), 'tools')])
+  const [state, services, files, discovery] = await Promise.all([readJson(toolPackStateFile(), null), officialOnlineServices(), relativeFiles(path.join(dataRoot(), 'tools'), 'tools'), discoverToolPack()])
   const expected = Array.isArray(state?.files) ? state.files.filter(validToolPackPath) : []
   const installed = Boolean(state?.version && expected.length && expected.length === files.length && expected.every((file) => files.includes(file)))
-  return { installed, installedVersion: installed ? state.version : '', fileCount: files.length, managed: Boolean(state?.version), downloadConfigured: Boolean(services.toolPack.url && services.toolPack.sha256), availableVersion: services.toolPack.version, releaseUrl: services.updater.owner && services.updater.repo ? `https://github.com/${services.updater.owner}/${services.updater.repo}/releases` : '' }
+  return { installed, installedVersion: installed ? state.version : '', fileCount: files.length, managed: Boolean(state?.version), downloadConfigured: Boolean(discovery.available), availableVersion: discovery.version || '', discoveryReason: discovery.reason || '', releaseUrl: discovery.releaseUrl || (services.updater.owner && services.updater.repo ? `https://github.com/${services.updater.owner}/${services.updater.repo}/releases` : ''), download: toolPackDownloadState }
 }
 async function readToolPackManifest(archive) {
   const files = new Map(archive.files.filter((entry) => entry.type === 'File').map((entry) => [entry.path, entry]))
@@ -622,27 +731,80 @@ async function installToolPackArchive(sourcePath, expectedDigest = '') {
     }
     if (currentFiles.length) await fs.rename(toolsDirectory, backup)
     await fs.rename(stagedTools, toolsDirectory)
-    await writeJson(toolPackStateFile(), { version: 1, packageId: manifest.packageId, version: String(manifest.appVersion || manifest.version), installedAt: new Date().toISOString(), archiveSha256: digest, files: listed.map((entry) => entry.path) })
-    await fs.rm(backup, { recursive: true, force: true }); runtimeLog.info('tool_pack.installed', { version: String(manifest.appVersion || manifest.version), fileCount: listed.length }); return toolPackStatus()
+    const installedVersion = String(manifest.toolPackVersion || manifest.appVersion || manifest.version)
+    await writeJson(toolPackStateFile(), { version: 1, packageId: manifest.packageId, version: installedVersion, installedAt: new Date().toISOString(), archiveSha256: digest, files: listed.map((entry) => entry.path) })
+    await fs.rm(backup, { recursive: true, force: true }); runtimeLog.info('tool_pack.installed', { version: installedVersion, fileCount: listed.length }); return toolPackStatus()
   } catch (error) {
     if (!(await fs.stat(toolsDirectory).catch(() => null)) && await fs.stat(backup).catch(() => null)) await fs.rename(backup, toolsDirectory).catch(() => {})
     runtimeLog.error('tool_pack.install_failed', { code: error?.code || 'UNEXPECTED', error }); throw error
   } finally { await fs.rm(staging, { recursive: true, force: true }).catch(() => {}); await fs.rm(backup, { recursive: true, force: true }).catch(() => {}) }
 }
 async function downloadToolPack() {
-  const services = await officialOnlineServices(); const settings = services.toolPack
-  if (!settings.url || !settings.sha256) throw new ToolPackError('DOWNLOAD_UNAVAILABLE', '官方工具资源包尚未发布，请前往 Releases 下载后选择本地文件安装。')
-  const temporary = path.join(dataRoot(), `tool-pack-${crypto.randomUUID()}.zip`); const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 10 * 60 * 1000)
-  try {
-    const response = await fetch(settings.url, { signal: controller.signal })
-    if (!response.ok || !response.body) throw new ToolPackError('DOWNLOAD_FAILED', '下载工具资源包失败，请稍后重试。')
-    const declaredSize = Number(response.headers.get('content-length') || 0); const limit = settings.maxSizeMiB * 1024 * 1024
-    if (declaredSize && declaredSize > limit) throw new ToolPackError('ARCHIVE_TOO_LARGE', `工具资源包超过 ${settings.maxSizeMiB} MiB 上限。`)
-    let downloaded = 0; const limiter = new Transform({ transform(chunk, _encoding, callback) { downloaded += chunk.length; callback(downloaded > limit ? new ToolPackError('ARCHIVE_TOO_LARGE', `工具资源包超过 ${settings.maxSizeMiB} MiB 上限。`) : null, chunk) } })
-    await pipeline(Readable.fromWeb(response.body), limiter, fsStream.createWriteStream(temporary))
-    return await installToolPackArchive(temporary, settings.sha256)
-  } catch (error) { runtimeLog.warning('tool_pack.download_failed', { code: error?.code || 'UNEXPECTED', error }); throw error }
-  finally { clearTimeout(timer); await fs.rm(temporary, { force: true }).catch(() => {}) }
+  if (toolPackDownloadPromise) return toolPackDownloadState
+  const controller = new AbortController()
+  toolPackDownloadController = controller
+  lastToolPackProgressAt = 0
+  const temporary = path.join(dataRoot(), `tool-pack-${crypto.randomUUID()}.zip`)
+  toolPackDownloadPromise = (async () => {
+    const timer = setTimeout(() => controller.abort(), 10 * 60 * 1000)
+    try {
+      publishToolPackDownloadState({ phase: 'discovering', progress: 0, transferred: 0, total: 0, bytesPerSecond: 0, message: '正在查询与当前版本兼容的官方工具包…', error: '' })
+      const services = await officialOnlineServices(); const settings = services.toolPack; const discovered = await discoverToolPack(true)
+      if (controller.signal.aborted) throw new ToolPackError('DOWNLOAD_CANCELLED', '已取消工具包下载。')
+      if (!discovered.available) {
+        const message = discovered.reason === 'failed'
+          ? '暂时无法连接 GitHub 查询官方工具资源包。请检查网络后重试，或前往 Releases 下载 ZIP 后选择本地文件安装。'
+          : '未找到与当前版本频道兼容的官方工具资源包，请前往 Releases 下载后选择本地文件安装。'
+        throw new ToolPackError('DOWNLOAD_UNAVAILABLE', message)
+      }
+      runtimeLog.info('tool_pack.download_started', { version: discovered.version, expectedSize: discovered.size })
+      publishToolPackDownloadState({ phase: 'downloading', progress: 0, transferred: 0, total: discovered.size, bytesPerSecond: 0, message: `正在下载工具包 ${discovered.version}…`, error: '' })
+      const response = await fetch(discovered.url, { signal: controller.signal })
+      if (!response.ok || !response.body) throw new ToolPackError('DOWNLOAD_FAILED', '下载工具资源包失败，请稍后重试。')
+      const declaredSize = Number(response.headers.get('content-length') || 0); const total = declaredSize || discovered.size; const limit = settings.maxSizeMiB * 1024 * 1024
+      if (declaredSize && declaredSize > limit) throw new ToolPackError('ARCHIVE_TOO_LARGE', `工具资源包超过 ${settings.maxSizeMiB} MiB 上限。`)
+      let downloaded = 0; let previousDownloaded = 0; let previousTime = Date.now()
+      const limiter = new Transform({ transform(chunk, _encoding, callback) {
+        downloaded += chunk.length
+        if (downloaded > limit) return callback(new ToolPackError('ARCHIVE_TOO_LARGE', `工具资源包超过 ${settings.maxSizeMiB} MiB 上限。`))
+        const now = Date.now()
+        if (now - lastToolPackProgressAt >= 200) {
+          const elapsed = Math.max(1, now - previousTime); const bytesPerSecond = Math.round((downloaded - previousDownloaded) * 1000 / elapsed)
+          previousDownloaded = downloaded; previousTime = now; lastToolPackProgressAt = now
+          publishToolPackDownloadState({ phase: 'downloading', progress: total ? Math.min(100, Math.round(downloaded * 100 / total)) : 0, transferred: downloaded, total, bytesPerSecond, message: `正在下载工具包 ${discovered.version}…` })
+        }
+        callback(null, chunk)
+      } })
+      await pipeline(Readable.fromWeb(response.body), limiter, fsStream.createWriteStream(temporary))
+      if (controller.signal.aborted) throw new ToolPackError('DOWNLOAD_CANCELLED', '已取消工具包下载。')
+      publishToolPackDownloadState({ phase: 'installing', progress: 100, transferred: downloaded, total, bytesPerSecond: 0, message: '下载完成，正在校验并安装工具包…', error: '' })
+      const status = await installToolPackArchive(temporary, discovered.sha256)
+      runtimeLog.info('tool_pack.download_completed', { version: discovered.version })
+      publishToolPackDownloadState({ phase: 'completed', progress: 100, transferred: downloaded, total, bytesPerSecond: 0, message: '工具包已下载、校验并安装完成。', error: '' })
+      return status
+    } catch (error) {
+      if (controller.signal.aborted || error?.code === 'DOWNLOAD_CANCELLED') {
+        runtimeLog.info('tool_pack.download_cancelled', {})
+        publishToolPackDownloadState({ phase: 'cancelled', progress: 0, transferred: 0, total: 0, bytesPerSecond: 0, message: '已取消工具包下载，并已清理临时文件。', error: '' })
+        return null
+      }
+      runtimeLog.warning('tool_pack.download_failed', { code: error?.code || 'UNEXPECTED', error })
+      publishToolPackDownloadState({ phase: 'failed', bytesPerSecond: 0, message: '工具包下载失败。', error: error?.message || '请稍后重试。' })
+      throw error
+    } finally {
+      clearTimeout(timer)
+      await fs.rm(temporary, { force: true }).catch(() => {})
+    }
+  })()
+  try { return await toolPackDownloadPromise } finally { if (toolPackDownloadController === controller) toolPackDownloadController = null; toolPackDownloadPromise = null }
+}
+function cancelToolPackDownload() {
+  if (!toolPackDownloadActive() || !toolPackDownloadController) return toolPackDownloadState
+  if (toolPackDownloadState.phase === 'installing') return { ...toolPackDownloadState, message: '工具包正在校验并安装，此阶段不能安全取消。' }
+  runtimeLog.info('tool_pack.download_cancellation_requested', { phase: toolPackDownloadState.phase })
+  publishToolPackDownloadState({ phase: 'cancelling', message: '正在取消下载并清理临时文件…', error: '' })
+  toolPackDownloadController.abort()
+  return toolPackDownloadState
 }
 async function launchTarget(target, options = {}) {
   const targetType = /^https?:\/\//i.test(target) ? 'web' : 'local'
@@ -781,13 +943,6 @@ async function showWheel(appearance = null, preview = false) {
 }
 async function ensureRuntimeLayout() {
   await Promise.all(['items', 'items/default', 'static/images/builtin', 'static/images/custom', 'static/images/custom/backgrounds', 'static/icons', 'static/themes', 'static/templates', 'static/data', 'tools', 'config', 'config/sources/default', 'logs'].map((directory) => fs.mkdir(path.join(dataRoot(), directory), { recursive: true })))
-  const bundledTools = app.isPackaged && !process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.resourcesPath, 'tools') : ''
-  const userTools = path.join(dataRoot(), 'tools')
-  const userToolEntries = await fs.readdir(userTools).catch((error) => error.code === 'ENOENT' ? [] : Promise.reject(error))
-  if (bundledTools && userToolEntries.length === 0) {
-    try { for (const entry of await fs.readdir(bundledTools)) await fs.cp(path.join(bundledTools, entry), path.join(userTools, entry), { recursive: true, force: false, errorOnExist: false }) }
-    catch (error) { if (error.code !== 'ENOENT') { runtimeLog.error('runtime.bundled_tools_copy_failed', { error }); throw error } }
-  }
   const data = await sources(); if (!(await readJson(sourceFile(), null))) await writeJson(sourceFile(), data); if (!(await readJson(categoryFile(defaultSourceId), null))) await fs.writeFile(categoryFile(defaultSourceId), await fs.readFile(template('config', 'categories.json')))
   const initialization = await readJson(config('initialization.json'), { version: 1 })
   await installBundledDefaultSource(initialization)
@@ -797,7 +952,7 @@ async function ensureRuntimeLayout() {
 function createWindow() { mainWindow = new BrowserWindow({ width: 1280, height: 820, minWidth: 960, minHeight: 640, autoHideMenuBar: true, backgroundColor: '#f8e6d2', icon: path.join(__dirname, '..', 'renderer', 'assets', 'jae-travel-suitcase.ico'), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false } }); mainWindow.setMenuBarVisibility(false); mainWindow.on('closed', () => { runtimeLog.info('window.main_closed', {}); mainWindow = null }); if (process.env.VITE_DEV_SERVER_URL) mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL); else mainWindow.loadFile(path.join(app.getAppPath(), 'dist', 'renderer', 'index.html')); runtimeLog.info('window.main_created', { development: Boolean(process.env.VITE_DEV_SERVER_URL) }) }
 app.on('render-process-gone', (_event, webContents, details) => runtimeLog.error('renderer.process_gone', { reason: details.reason, exitCode: details.exitCode, role: webContents.getType() }))
 app.whenReady().then(async () => {
-  Menu.setApplicationMenu(null); registerToolboxAssetProtocol(); await ensureRuntimeLayout(); await initializeUpdater()
+  Menu.setApplicationMenu(null); await migrateLegacyUserData(); registerToolboxAssetProtocol(); await ensureRuntimeLayout(); await initializeUpdater()
   ipcMain.handle('toolbox:launch', async (_event, target, options = {}) => launchTarget(target, options))
 ipcMain.handle('toolbox:get-shortcuts', async () => { const settings = await shortcutSettings(); return { ...settings, wheelLayout: await wheelLayout(settings.sourceId) } })
   ipcMain.handle('toolbox:get-wheel-layout', (_event, sourceId) => wheelLayout(sourceId))
@@ -816,9 +971,11 @@ ipcMain.handle('toolbox:get-shortcuts', async () => { const settings = await sho
   ipcMain.handle('toolbox:choose-item-image', async (event) => { const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { title: '选择项目图标', properties: ['openFile'], filters: [{ name: '图片或图标文件', extensions: [...imageExtensions].map((ext) => ext.slice(1)) }] }); return result.canceled || !result.filePaths[0] ? null : { sourcePath: result.filePaths[0], previewUrl: await imageData(result.filePaths[0]) } })
   ipcMain.handle('toolbox:choose-config-import', async (event) => { const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { title: '选择 .attconfig 配置包', properties: ['openFile'], filters: [{ name: '阿洁的旅行工具箱配置', extensions: ['attconfig'] }] }); return result.canceled || !result.filePaths[0] ? null : { sourcePath: result.filePaths[0], fileName: path.basename(result.filePaths[0]) } })
   ipcMain.handle('toolbox:get-tool-pack-status', () => toolPackStatus())
+  ipcMain.handle('toolbox:get-tool-pack-download-state', () => toolPackDownloadState)
   ipcMain.handle('toolbox:choose-tool-pack', async (event) => { const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { title: '选择工具资源包', properties: ['openFile'], filters: [{ name: '阿洁的旅行工具资源包', extensions: ['zip'] }] }); return result.canceled || !result.filePaths[0] ? null : { sourcePath: result.filePaths[0], fileName: path.basename(result.filePaths[0]) } })
   ipcMain.handle('toolbox:install-tool-pack', (_event, sourcePath) => installToolPackArchive(sourcePath))
   ipcMain.handle('toolbox:download-tool-pack', () => downloadToolPack())
+  ipcMain.handle('toolbox:cancel-tool-pack-download', () => cancelToolPackDownload())
   ipcMain.handle('toolbox:import-config', (_event, payload) => importConfig(payload || {}))
   ipcMain.handle('toolbox:export-source', (event, sourceId) => exportSource(sourceId, event.sender))
   ipcMain.handle('toolbox:list-sources', () => sources()); ipcMain.handle('toolbox:create-source', (_event, payload) => createSource(payload || {})); ipcMain.handle('toolbox:switch-source', (_event, id) => switchSource(id)); ipcMain.handle('toolbox:delete-source', (_event, id) => deleteSource(id)); ipcMain.handle('toolbox:list-categories', (_event, id) => categories(id)); ipcMain.handle('toolbox:save-categories', (_event, id, list) => saveCategories(id, list)); ipcMain.handle('toolbox:list-items', (_event, id) => listItems(id)); ipcMain.handle('toolbox:save-item-order', (_event, sourceId, ids) => saveItemOrder(sourceId, ids)); ipcMain.handle('toolbox:save-item', (_event, payload) => saveItem(payload || {})); ipcMain.handle('toolbox:delete-item', (_event, sourceId, id) => deleteItem(sourceId, id)); ipcMain.handle('toolbox:bulk-update-items', (_event, payload) => bulkUpdateItems(payload || {})); ipcMain.handle('toolbox:import-item-to-source', (_event, payload) => importItem(payload || {}))
@@ -834,6 +991,7 @@ ipcMain.handle('toolbox:get-shortcuts', async () => { const settings = await sho
   ipcMain.handle('toolbox:save-update-settings', (_event, payload) => saveUpdateSettings(payload || {}))
   ipcMain.handle('toolbox:check-for-updates', () => checkForUpdates())
   ipcMain.handle('toolbox:download-update', () => downloadUpdate())
+  ipcMain.handle('toolbox:cancel-update-download', () => cancelUpdateDownload())
   ipcMain.handle('toolbox:install-update', () => installDownloadedUpdate())
   ipcMain.handle('toolbox:get-runtime-logs', (_event, limit) => runtimeLog.recent(limit))
   ipcMain.handle('toolbox:export-runtime-logs', async (event) => {
@@ -859,6 +1017,7 @@ ipcMain.handle('toolbox:get-shortcuts', async () => { const settings = await sho
   setInterval(async () => { const now = new Date(); if (now.getSeconds() !== 0) return; for (const schedule of await schedules()) if (schedule.enabled && cronMatches(schedule.cron, now)) triggerSchedule(schedule) }, 1000)
   await applyShortcuts()
   createWindow()
+  if (legacyDataMigrationWarning) dialog.showMessageBox(mainWindow, { type: 'warning', title: '用户数据迁移未完成', message: legacyDataMigrationWarning })
   const launchSettings = await updateSettings()
   runtimeLog.info('app.ready', { development: !app.isPackaged, startupSchedule: Boolean(startupId) })
   if (launchSettings.checkOnLaunch) checkForUpdates().catch((error) => runtimeLog.warning('updater.launch_check_failed', { error }))

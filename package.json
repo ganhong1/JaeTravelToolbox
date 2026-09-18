@@ -1,6 +1,6 @@
 {
   "name": "jae-travel-toolbox",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "license": "MPL-2.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,8 @@
     "dev:electron": "wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
     "build": "vite build",
     "preview": "vite preview",
-    "package:win": "npm run build && electron-builder --win nsis --x64 --config.directories.output=release/installer",
+    "build:launcher": "node scripts/build-windows-launcher.cjs",
+    "package:win": "npm run build && npm run build:launcher && electron-builder --win nsis --x64 --config.directories.output=release/installer",
     "package:tools": "node scripts/package-tools-pack.cjs",
     "build:default-source": "node scripts/rebuild-default-source.cjs",
     "logs:pretty": "pino-pretty"
@@ -44,6 +45,7 @@
       "output": "release"
     },
     "artifactName": "JaeTravelToolbox-Setup-${version}.${ext}",
+    "disableSanityCheckAsar": true,
     "files": [
       "apps/desktop/**/*",
       "dist/renderer/**/*",
@@ -59,7 +61,10 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "perMachine": false
-    }
+      "perMachine": false,
+      "packElevateHelper": false,
+      "include": "scripts/nsis/keep-data-on-uninstall.nsh"
+    },
+    "afterPack": "scripts/after-pack-windows.cjs"
   }
 }

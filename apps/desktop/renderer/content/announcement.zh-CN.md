@@ -8,5 +8,4 @@
 b站演示视频:
 
 旅行工具箱交流群:977371550,欢迎入群交流或者反馈BUG **<small>~(单纯来发癫也行)~</small>**
-![图片说明](../../../../static/images/custom/qrcode_1789537176153.jpg)
-
+![旅行工具箱交流群二维码](https://raw.githubusercontent.com/ganhong1/JaeTravelToolbox/main/content/images/qrcode_1789537176153.jpg)

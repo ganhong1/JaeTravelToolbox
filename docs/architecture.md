@@ -1,9 +1,9 @@
 # 阿洁的旅行工具箱架构与接口规范
 
 > 文档状态：当前实现基线。
-> 应用版本：`0.1.0-beta.1`。
+> 应用版本：`0.1.0-beta.2`。
 > 适用代码：`apps/desktop/electron/main.cjs`、`apps/desktop/electron/preload.cjs`、`apps/desktop/renderer/`、`runtime-template/` 与 `scripts/`。
-> 最后核对：2026-09-17。
+> 最后核对：2026-09-18。
 
 本文档是阿洁的旅行工具箱（JaeTravelToolbox）的唯一架构说明与内部接口契约。它描述当前已经落地的能力、文件格式、Electron IPC 接口、发布边界和兼容性要求。没有明确标为“规划”的内容均应以当前代码实现为准。
 
@@ -28,7 +28,7 @@
 - 应用架构可跨平台运行；管理员启动、CMD 自定义命令和 Windows 任务计划仅支持 Windows。
 - 没有 HTTP REST 服务、云端账户、同步服务或数据库。所有主业务数据均为本地 JSON 与 ZIP。
 - `tools/` 不纳入 Git，也不再进入 NSIS 安装包。默认本地工具通过独立 ZIP 工具资源包分发。
-- 资源包一键下载尚未启用：`online-services.json` 中的 `toolPack.url` 与 `sha256` 目前为空。用户仍可选择本地 ZIP 进行安装。
+- 默认配置源本地工具包会从 GitHub Releases 自动发现并下载；GitHub 查询失败或未发现兼容包时，界面必须提示原因，用户仍可选择本地 ZIP 安装。
 - GitHub 更新源已指向 `ganhong1/JaeTravelToolbox`，但真正自动更新还要求发布与当前版本匹配的 NSIS 更新元数据和安装包。
 
 ## 2. 技术栈和架构
@@ -44,6 +44,8 @@
 | 归档 | archiver + unzipper | `.attconfig` 与工具资源包 ZIP 的构建、读取和校验 |
 | 日志 | Pino | 五级结构化运行日志和 TXT 导出 |
 | Windows 打包/更新 | electron-builder NSIS + electron-updater | 安装包构建、GitHub Releases 更新检查与安装 |
+
+渲染层使用原生 `<dialog>` 作为模态框。操作气泡默认挂在主页面右上角；当任意模态框打开时，气泡容器会自动移动到最顶层的模态框内部，因此其显示层级始终高于设置、更新、资源包等对话框。模态框关闭后，容器自动回到主页面。该迁移不改变气泡队列、自动消失时长或手动关闭行为。
 
 ```mermaid
 flowchart LR
@@ -65,10 +67,12 @@ flowchart LR
 | 运行模式 | `dataRoot`（用户可变数据） | 应用模板 |
 |---|---|---|
 | 源码开发 | 工程根目录 | 工程内 `runtime-template/` |
-| NSIS 安装版 | Electron `userData` 目录 | `app.asar` 同级应用资源中的 `runtime-template/` |
+| NSIS 安装版 | 安装根目录 `data/` | `app/resources/app.asar` 内的 `runtime-template/` |
 | 旧便携兼容路径 | `PORTABLE_EXECUTABLE_DIR` | 应用内模板 |
 
-项目相对目标的查找顺序为：`dataRoot/<target>`、工具箱根目录 `<target>`、安装版 `resources/<target>`。`http://` 或 `https://` 是网站；其余目标均为本地目标。推荐相对路径一律使用 `/`，例如 `tools/MAA/MAA.exe`。
+安装根目录只保留 `JaeTravelToolbox.exe`（无控制台启动器）和 `Uninstall JaeTravelToolbox.exe`；Electron 运行时文件收纳在 `app/`，可变数据和 Chromium 缓存收纳在 `data/`。启动器将参数原样转发给 `app/JaeTravelToolbox.Runtime.exe`，并以安装根目录为工作目录。
+
+项目相对目标的查找顺序为：`dataRoot/<target>`、工具箱根目录 `<target>`、安装版 `app/resources/<target>`。`http://` 或 `https://` 是网站；其余目标均为本地目标。推荐相对路径一律使用 `/`，例如 `tools/MAA/MAA.exe`。
 
 ### 3.2 用户数据目录
 
@@ -89,6 +93,8 @@ flowchart LR
 ├─ tools/
 └─ logs/runtime-YYYY-MM-DD.ndjson
 ```
+
+从旧版安装包首次升级时，程序会在启动前把旧 Electron `userData` 目录中的 `config/`、`items/`、`static/` 与 `tools/` 复制到新的 `data/`，逐文件按相对路径和大小验证，再删除旧目录中的全部数据（包括可安全重建的 Chromium 缓存）。若目标目录已存在或校验失败，旧数据不会删除，且主窗口会提示用户处理迁移。NSIS 自动更新始终保留安装根目录的 `data/`；交互式卸载会询问用户是否保留，默认保留。静默卸载同样默认保留，只有传入 `--delete-user-data` 才会一并删除。
 
 首次启动会创建目录、建立默认配置源，并导入内置 `default-source.attconfig` 中尚未存在的默认项目。默认源通过归档 SHA-256 指纹判断是否已处理；更新默认源时只补充缺失项目，不覆盖用户已有项目。
 
@@ -214,11 +220,13 @@ Cron 为五段式“分 时 日 月 周”。每步间隔范围为 0–3600 秒�
   "version": 1,
   "announcement": { "url": "", "timeoutSeconds": 8 },
   "updater": { "provider": "github", "owner": "ganhong1", "repo": "JaeTravelToolbox", "channel": "latest" },
-  "toolPack": { "url": "", "sha256": "", "version": "", "maxSizeMiB": 2048 }
+  "toolPack": { "provider": "github-release", "channel": "auto", "maxSizeMiB": 2048 }
 }
 ```
 
-公告和工具资源包 URL 只接受 HTTPS。更新偏好保存于 `config/update-settings.json`：`checkOnLaunch`、`autoDownload`、`autoInstallOnQuit`。开发模式不检查更新；安装版更新检查超时为 15 秒，失败不会阻塞主界面。
+公告和工具资源包 URL 只接受 HTTPS。远程公告固定由仓库 `content/announcement.md` 提供，正文图片使用同仓库 `content/images/` 的 GitHub Raw 绝对 HTTPS URL；程序仍保留内置公告和最近成功缓存作为离线回退。更新偏好保存于 `config/update-settings.json`：`source`、`checkOnLaunch`、`autoDownload`、`autoInstallOnQuit`；当前 `source` 仅允许 `github-release`，但 UI 与数据结构已为未来官方镜像预留。开发模式不检查更新；安装版更新检查超时为 15 秒，失败不会阻塞主界面。
+
+更新下载状态包含 `progress`、`transferred`、`total` 与 `bytesPerSecond`。下载由 `electron-updater` 的 `CancellationToken` 控制；用户取消后由更新器清理临时下载文件，主进程复位状态并记录取消事件。当前不提供伪暂停或断点续传。
 
 ## 5. `.attconfig` 配置包契约
 
@@ -261,11 +269,13 @@ ZIP 包含 `manifest.json` 与全部 `tools/...` 文件。清单版本当前为�
 
 安装流程：校验 ZIP 文件、总大小、清单、条目路径、解压后总大小、逐文件 SHA-256；先写入临时目录，再替换受管理的 `tools/` 目录。若检测到 `tools/` 含有不在现有受管清单中的文件，则拒绝覆盖，保护用户手工放入的文件。
 
-安装状态保存到 `config/tool-pack.json`。当前资源包没有独立版本和应用兼容范围，`appVersion` 仅表示构建它时的应用版本；这是当前限制，不应将其误认为独立资源包版本体系。
+安装状态保存到 `config/tool-pack.json`。资源包具有独立版本和兼容范围：源码根目录的 `tool-pack.release.json` 定义 `toolPackVersion`、`minAppVersion`、可选的 `maxAppVersionExclusive` 与 `channel`。
 
 ### 6.2 后续版本约束
 
-在资源包需要脱离应用独立更新前，清单应新增 `toolPackVersion`、`minAppVersion` 与 `maxAppVersionExclusive`，并在安装前验证兼容范围。此项为规划，尚未在当前代码中实现。
+资源包发布不依赖重新构建安装程序。构建脚本会在 ZIP 内写入相同元数据，并生成同名发布清单 `JaeTravelToolbox-tools-<app-version>.json`；该文件包含资源包版本、兼容范围、频道、ZIP 文件名、大小与 SHA-256。
+
+在线查询流程：工具箱依据 `online-services.json` 的 `toolPack.provider = github-release` 和频道策略调用 GitHub Releases API；`auto` 会在预发布应用中选择 `beta`、正式应用中选择 `stable`。程序从最新 Release 倒序读取发布清单，只接受同频道、兼容当前应用版本、且 ZIP 资产名称和大小完全匹配的记录。下载后仍对 ZIP SHA-256、内部清单、路径和每个文件的哈希进行校验。查询结果缓存五分钟；失败不会影响本地 ZIP 安装。
 
 ## 7. IPC 接口契约
 
@@ -343,9 +353,9 @@ type BulkPayload = {
 | `getAnnouncement()` | — | `AnnouncementView` | 内置、缓存或远程 Markdown |
 | `dismissAnnouncement(contentId)` | 内容哈希 | `AnnouncementView` | 仅本应用版本内不再自动展示 |
 | `getUpdateState()` | — | `UpdateState` | 更新器状态机快照 |
-| `getUpdateSettings()` / `saveUpdateSettings(settings)` | 偏好 | `UpdateSettings` | 检查、下载、退出安装偏好 |
+| `getUpdateSettings()` / `saveUpdateSettings(settings)` | 偏好 | `UpdateSettings` | 更新源、检查、下载、退出安装偏好 |
 | `checkForUpdates()` | — | `UpdateState` | 仅正式安装版可用 |
-| `downloadUpdate()` / `installUpdate()` | — | 状态 / `{ installing: true }` | 下载或退出后安装 |
+| `downloadUpdate()` / `cancelUpdateDownload()` / `installUpdate()` | — | 状态 / `{ installing: true }` | 下载、取消并清理临时文件、或退出后安装 |
 | `getRuntimeLogs(limit)` | 1–2000 | `LogEntry[]` | 读取当前运行 NDJSON |
 | `exportRuntimeLogs()` | — | `{ count, fileName } \| null` | 保存 TXT 到用户选择的位置 |
 | `logRendererEvent(payload)` | `{ level, event, context }` | `void` | 渲染层报告异常/事件 |
@@ -369,18 +379,19 @@ type BulkPayload = {
 
 | 方法 | 参数 | 返回 | 说明 |
 |---|---|---|---|
-| `getToolPackStatus()` | — | `ToolPackStatus` | 已安装、受管、可下载、文件数和版本 |
+| `getToolPackStatus()` / `getToolPackDownloadState()` | — | `ToolPackStatus` / 下载状态 | 已安装、受管、可下载、文件数、版本与当前下载任务快照 |
 | `chooseToolPack()` | — | `{ sourcePath, fileName } \| null` | 选择本地 ZIP |
 | `installToolPack(sourcePath)` | ZIP 路径 | `ToolPackStatus` | 本地校验、临时解压和受控替换 |
-| `downloadToolPack()` | — | `ToolPackStatus` | HTTPS 下载后校验安装；未配置 URL/哈希会拒绝 |
+| `downloadToolPack()` / `cancelToolPackDownload()` | — | `ToolPackStatus` / 下载状态 | 自动发现 GitHub Release 中最新兼容资源包、显示进度并下载校验安装；查询或下载阶段可取消 |
 
-工具资源包领域错误代码：`ARCHIVE_MISSING`、`ARCHIVE_TOO_LARGE`、`ARCHIVE_INVALID`、`MANIFEST_MISSING`、`MANIFEST_INVALID`、`PATH_INVALID`、`CONTENTS_INVALID`、`CHECKSUM_MISMATCH`、`FILE_CHECKSUM_MISMATCH`、`TOOLS_DIRECTORY_OCCUPIED`、`DOWNLOAD_UNAVAILABLE`、`DOWNLOAD_FAILED`。
+工具资源包领域错误代码：`ARCHIVE_MISSING`、`ARCHIVE_TOO_LARGE`、`ARCHIVE_INVALID`、`MANIFEST_MISSING`、`MANIFEST_INVALID`、`PATH_INVALID`、`CONTENTS_INVALID`、`CHECKSUM_MISMATCH`、`FILE_CHECKSUM_MISMATCH`、`TOOLS_DIRECTORY_OCCUPIED`、`DISCOVERY_FAILED`、`DOWNLOAD_UNAVAILABLE`、`DOWNLOAD_FAILED`。
 
 ### 7.8 主进程推送事件
 
 | 事件 | 订阅方式 | 载荷 | 用途 |
 |---|---|---|---|
 | `toolbox:update-status` | `onUpdateStatus(callback)` | `UpdateState` | 更新器状态变化 |
+| `toolbox:tool-pack-download-status` | `onToolPackDownloadStatus(callback)` | 工具包下载状态 | 查询、下载、取消、校验安装状态及进度 |
 | `toolbox:runtime-log` | `onRuntimeLog(callback)` | `LogEntry` | 日志窗口打开时的实时追加 |
 | `wheel:data` | `onWheelData(callback)` | `WheelPayload` | 向独立轮盘窗口发送项目布局 |
 
@@ -401,6 +412,8 @@ type BulkPayload = {
 日志级别为 `DEBUG`、`INFO`、`WARNING`、`ERROR`、`CRITICAL`。运行日志为 NDJSON，每条事件至少包含 `time`、`severity`、`event`；TXT 导出时转为本机易读时间。
 
 日志必须脱敏，禁止写入账号凭据、令牌、Cookie、密码、完整外部 URI、深层本地路径、完整 payload、截图内容、内存地址和窗口句柄。字符串长度受限，数组、对象和递归深度均受裁剪。
+
+本轮在线功能的关键事件包括：`tool_pack.discovery_started`、`tool_pack.discovery_succeeded`、`tool_pack.discovery_empty`、`tool_pack.discovery_failed`、`tool_pack.download_started`、`tool_pack.download_cancellation_requested`、`tool_pack.download_cancelled`、`tool_pack.download_completed`、`tool_pack.download_failed`、`updater.download_started`、`updater.download_progress`、`updater.download_cancellation_requested`、`updater.download_failed` 与 `renderer.toast_host_changed`。其中进度事件会节流；后者仅记录气泡在“页面 / 模态框”之间切换的上下文，不记录对话框内容。
 
 ## 9. 版本号和兼容性约束
 
@@ -432,7 +445,7 @@ type BulkPayload = {
 
 JSON 和 ZIP 中的 `version` 是**格式版本**，不是应用版本。它们是单调递增整数：仅在读取方无法兼容旧格式时递增。新增可选字段不递增格式版本，但必须有默认值；移除/改义字段必须通过新版本、迁移逻辑或兼容读取处理。
 
-当前格式基线：配置源归档 `1`、分类 `1`、排序 `1`、轮盘布局 `1`、定时任务 `1`、在线服务 `1`、快捷键 `2`、工具资源包清单 `1`。
+当前格式基线：配置源归档 `1`、分类 `1`、排序 `1`、轮盘布局 `1`、定时任务 `1`、在线服务 `1`、快捷键 `2`、工具资源包内部清单 `1`、工具资源包发布清单 `1`。
 
 ## 10. 构建、发布与维护
 
@@ -445,8 +458,4 @@ JSON 和 ZIP 中的 `version` 是**格式版本**，不是应用版本。它们�
 | `npm run package:tools` | 构建独立工具资源包到 `release/tool-pack/` |
 | `npm run logs:pretty` | 使用 `pino-pretty` 格式化 NDJSON 日志输入 |
 
-发布顺序建议：更新版本号 → 构建默认配置源 → 构建 NSIS 安装包与工具资源包 → 核对哈希和解压内容 → 上传 GitHub Release → 将工具包 URL、SHA-256、版本写入下一发行版的 `online-services.json` → 创建对应 Git 标签和发布说明。
-
-## 11. 已知一致性待办
-
-本文件按现有代码记录。仓库 `README.md` 仍写有“正式 Windows 安装包可携带首装工具副本”的旧说明，已与当前“不携带 tools、使用独立资源包”的实现不一致；发布前应更新 README 与使用教程中相同的旧目录表述。
+发布顺序建议：更新应用版本与 `tool-pack.release.json` → 构建默认配置源与工具资源包 → 核对 ZIP、`.sha256` 和发布清单 → 上传三项资产到对应 GitHub Release。工具箱会自动发现后续资源包更新；只有应用本体变更时才需要构建 NSIS 安装包。

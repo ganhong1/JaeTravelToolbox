@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "toolPackVersion": "0.1.0-beta.2-tools.1",
+  "minAppVersion": "0.1.0-beta.2",
+  "maxAppVersionExclusive": "0.2.0",
+  "channel": "beta"
+}

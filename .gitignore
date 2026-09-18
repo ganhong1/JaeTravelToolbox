@@ -1,6 +1,8 @@
 node_modules/
 dist/
+build/
 release/
+tool-pack-*.zip
 *.tsbuildinfo
 
 # 用户的本地运行数据，不作为源码提交。

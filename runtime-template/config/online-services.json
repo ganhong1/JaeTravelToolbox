@@ -1,7 +1,7 @@
 {
   "version": 1,
   "announcement": {
-    "url": "",
+    "url": "https://raw.githubusercontent.com/ganhong1/JaeTravelToolbox/main/content/announcement.md",
     "timeoutSeconds": 8
   },
   "updater": {
@@ -11,9 +11,8 @@
     "channel": "latest"
   },
   "toolPack": {
-    "url": "https://github.com/ganhong1/JaeTravelToolbox/releases/download/v0.1.0-beta.1/JaeTravelToolbox-tools-0.1.0-beta.1.zip",
-    "sha256": "e6d0653b586133b4b377c7c1de415b6f434be9b1ffd958c99ec87ab4eec89b21",
-    "version": "0.1.0-beta.1",
+    "provider": "github-release",
+    "channel": "auto",
     "maxSizeMiB": 2048
   }
 }

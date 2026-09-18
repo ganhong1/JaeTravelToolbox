@@ -14,7 +14,7 @@ MPL-2.0 是按文件生效的弱 Copyleft 许可证：当你修改并分发本�
 
 ## 仓库范围
 
-`tools/` 是本地工具的放置目录，已被 `.gitignore` 排除，不会随本仓库提交，也不会进入 Windows 安装程序。默认配置源所需的本地工具以独立工具资源包分发；用户可在应用的“本地工具资源包”界面选择 ZIP 安装，或在官方地址配置完成后直接下载。资源包安装到用户数据目录，应用更新不会覆盖它。请自行确认你放入该目录的程序拥有合法的下载、使用及再分发授权。
+`tools/` 是本地工具的放置目录，已被 `.gitignore` 排除，不会随本仓库提交，也不会进入 Windows 安装程序。默认配置源所需的本地工具以独立工具资源包分发；用户可在应用的“默认配置源本地工具包下载”界面选择 ZIP 安装，或在线查询后直接下载。安装版会把资源包、配置、图标、背景、日志及 Chromium 缓存统一保存到安装目录下的 `data/`，应用更新不会覆盖它。请自行确认你放入该目录的程序拥有合法的下载、使用及再分发授权。
 
 运行时产生的项目数据、用户自定义图标、背景图、日志和配置也不会纳入版本控制。
 
@@ -53,13 +53,15 @@ npm run build
 npm run package:win
 ```
 
+构建时会额外生成一个无控制台窗口的根目录启动器。安装后根目录只保留 `JaeTravelToolbox.exe` 与卸载程序；完整 Electron 运行时位于 `app/`，所有可变数据位于 `data/`。
+
 构建独立本地工具资源包：
 
 ```powershell
 npm run package:tools
 ```
 
-发布时先构建工具资源包，得到 ZIP 与 SHA-256；再将其 GitHub Release 下载地址、哈希和版本写入 [`runtime-template/config/online-services.json`](runtime-template/config/online-services.json)，最后构建 NSIS 安装包。更新器仅适用于正式 NSIS 安装版；未签名安装程序可能触发 Windows SmartScreen 提示。
+发布时先更新 [`tool-pack.release.json`](tool-pack.release.json)，再构建工具资源包。将 ZIP、`.sha256` 和同名 `.json` 发布清单一并上传到对应 GitHub Release；程序会自行查询当前频道的最新兼容资源包，无需为了资源包更新而重新构建安装程序。更新器仅适用于正式 NSIS 安装版；未签名安装程序可能触发 Windows SmartScreen 提示。
 
 ## 项目结构
 

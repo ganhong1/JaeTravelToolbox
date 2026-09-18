@@ -21,7 +21,7 @@ const searchInput = document.querySelector('#search');
 const pageTitle = document.querySelector('#page-title');
 const categoryDescription = document.querySelector('#category-description');
 const emptyState = document.querySelector('#empty-state');
-const toast = document.querySelector('#toast');
+const toastStack = document.querySelector('#toast-stack');
 const editDialog = document.querySelector('#edit-dialog');
 const confirmDialog = document.querySelector('#confirm-dialog');
 const editForm = document.querySelector('#edit-form');
@@ -81,6 +81,10 @@ const updateCurrentVersion = document.querySelector('#update-current-version');
 const updateStatus = document.querySelector('#update-status');
 const updateNotes = document.querySelector('#update-notes');
 const updateSourceHint = document.querySelector('#update-source-hint');
+const updateSource = document.querySelector('#update-source');
+const updateProgress = document.querySelector('#update-progress');
+const updateProgressBar = document.querySelector('#update-progress-bar');
+const updateProgressDetail = document.querySelector('#update-progress-detail');
 const runtimeLogDialog = document.querySelector('#runtime-log-dialog');
 const runtimeLogContent = document.querySelector('#runtime-log-content');
 const runtimeLogLevel = document.querySelector('#runtime-log-level');
@@ -96,11 +100,16 @@ const updateAutoInstall = document.querySelector('#update-auto-install');
 const checkUpdateButton = document.querySelector('#check-update');
 const openUpdatePageButton = document.querySelector('#open-update-page');
 const downloadUpdateButton = document.querySelector('#download-update');
+const cancelUpdateDownloadButton = document.querySelector('#cancel-update-download');
 const installUpdateButton = document.querySelector('#install-update');
 const toolPackDialog = document.querySelector('#tool-pack-dialog');
 const toolPackStatus = document.querySelector('#tool-pack-status');
 const toolPackDetail = document.querySelector('#tool-pack-detail');
 const downloadToolPackButton = document.querySelector('#download-tool-pack');
+const cancelToolPackDownloadButton = document.querySelector('#cancel-tool-pack-download');
+const toolPackProgress = document.querySelector('#tool-pack-progress');
+const toolPackProgressBar = document.querySelector('#tool-pack-progress-bar');
+const toolPackProgressDetail = document.querySelector('#tool-pack-progress-detail');
 const batchToolbar = document.querySelector('#batch-toolbar');
 const batchSelectedCount = document.querySelector('#batch-selected-count');
 const batchMoveDialog = document.querySelector('#batch-move-dialog');
@@ -149,7 +158,9 @@ let simpleScheduleDirty = false;
 let currentCategory = '全部';
 let sourceSettings = null;
 let currentSourceId = 'default';
-let toastTimer;
+let toastSequence = 0;
+let activeToasts = [];
+let toolPackDownloadState = { phase: 'idle', progress: 0, transferred: 0, total: 0, bytesPerSecond: 0, message: '尚未开始下载。', error: '' };
 let activeCard = null;
 let pendingImage = null;
 let editingCommandLaunches = [];
@@ -286,12 +297,61 @@ function readDroppedImage(file) {
   });
 }
 
-function showToast(message) {
-  toast.textContent = message;
-  toast.classList.add('is-visible');
-  window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => toast.classList.remove('is-visible'), 2600);
+const toastDurations = Object.freeze({ trace: 5000, debug: 6000, info: 8000, warn: 10000, error: 15000 });
+const toastLevels = new Set(Object.keys(toastDurations));
+const toastSemantics = new Set(['success', 'error', 'info']);
+const maxVisibleToasts = 5;
+
+function getTopmostModalDialog() {
+  const openDialogs = [...document.querySelectorAll('dialog[open]')];
+  return openDialogs.findLast((dialog) => dialog.matches(':modal')) || null;
 }
+
+function syncToastStackHost() {
+  const host = getTopmostModalDialog() || document.body;
+  if (toastStack.parentElement === host) return;
+  host.append(toastStack);
+  reportRendererEvent('info', 'toast_host_changed', {
+    host: host instanceof HTMLDialogElement ? 'modal' : 'page',
+    dialogId: host instanceof HTMLDialogElement ? host.id || 'unnamed' : '',
+  });
+}
+
+function dismissToast(toastId) {
+  const toast = activeToasts.find((entry) => entry.id === toastId);
+  if (!toast) return;
+  window.clearTimeout(toast.timer);
+  activeToasts = activeToasts.filter((entry) => entry.id !== toastId);
+  toast.element.classList.add('is-leaving');
+  window.setTimeout(() => toast.element.remove(), 180);
+}
+
+function showToast(message, options = {}) {
+  const level = toastLevels.has(options.level) ? options.level : 'info';
+  const semantic = toastSemantics.has(options.semantic) ? options.semantic : '';
+  const duration = Number.isFinite(options.duration) && options.duration > 0 ? options.duration : toastDurations[level];
+  const id = ++toastSequence;
+  const element = document.createElement('article');
+  element.className = `toast toast-level-${level}${semantic ? ` toast-${semantic}` : ''}`;
+  element.setAttribute('role', level === 'error' ? 'alert' : 'status');
+  const content = document.createElement('div');
+  if (options.title) content.append(Object.assign(document.createElement('strong'), { className: 'toast-title', textContent: String(options.title) }));
+  content.append(Object.assign(document.createElement('p'), { className: 'toast-message', textContent: String(message || '') }));
+  const closeButton = Object.assign(document.createElement('button'), { className: 'toast-close', type: 'button', textContent: '×', ariaLabel: '关闭提示' });
+  closeButton.addEventListener('click', () => dismissToast(id));
+  element.append(content, closeButton);
+  syncToastStackHost();
+  toastStack.append(element);
+  const toast = { id, element, timer: window.setTimeout(() => dismissToast(id), duration) };
+  activeToasts = [...activeToasts, toast];
+  if (activeToasts.length > maxVisibleToasts) dismissToast(activeToasts[0].id);
+  requestAnimationFrame(() => element.classList.add('is-visible'));
+  return id;
+}
+
+const toastStackHostObserver = new MutationObserver(() => syncToastStackHost());
+toastStackHostObserver.observe(document.body, { subtree: true, attributes: true, attributeFilter: ['open'] });
+
 
 function showImagePreview(container, imageUrl, alt) {
   const preview = document.createElement('img');
@@ -983,9 +1043,24 @@ document.querySelector('#choose-tool-pack').addEventListener('click', async () =
   catch (error) { await refreshToolPackStatus().catch(() => {}); showToast(`工具资源包安装失败：${error.message || '请检查文件。'}`); }
 });
 downloadToolPackButton.addEventListener('click', async () => {
-  try { downloadToolPackButton.disabled = true; toolPackStatus.textContent = '正在下载、校验并安装工具资源包…'; const status = await window.toolbox.downloadToolPack(); renderToolPackStatus(status); showToast('工具资源包已下载并安装。'); }
-  catch (error) { await refreshToolPackStatus().catch(() => {}); showToast(`工具资源包下载失败：${error.message || '请稍后重试。'}`); }
+  if (isToolPackDownloadActive()) {
+    showToast('下载任务正在进行中；可在此窗口查看实时进度或取消下载。', { title: '默认配置源本地工具包', level: 'warn' });
+    return;
+  }
+  showToast('正在查询 GitHub Releases 中与当前版本兼容的工具包。', { title: '默认配置源本地工具包', level: 'info' });
+  try {
+    const status = await window.toolbox.downloadToolPack();
+    if (status) await refreshToolPackStatus();
+    if (toolPackDownloadState.phase === 'completed') showToast('工具资源包已下载并安装。', { title: '默认配置源本地工具包', level: 'info', semantic: 'success' });
+  } catch (error) {
+    await refreshToolPackStatus().catch(() => {});
+    showToast(`工具资源包下载失败：${error.message || '请稍后重试。'}`, { title: '默认配置源本地工具包', level: 'error', semantic: 'error' });
+  }
 });
+cancelToolPackDownloadButton.addEventListener('click', async () => {
+  try { renderToolPackDownloadState(await window.toolbox.cancelToolPackDownload()); showToast('已请求取消下载，正在清理临时文件。', { title: '默认配置源本地工具包', level: 'info' }); } catch (error) { showToast(`取消下载失败：${error.message || '请稍后重试。'}`, { title: '默认配置源本地工具包', level: 'error', semantic: 'error' }); }
+});
+window.toolbox?.onToolPackDownloadStatus?.((state) => renderToolPackDownloadState(state));
 document.querySelector('#manage-update').addEventListener('click', () => openUpdateDialog().catch((error) => showToast(`更新设置读取失败：${error.message || '请重试。'}`)));
 document.querySelector('#view-runtime-logs').addEventListener('click', () => openRuntimeLogDialog());
 document.querySelector('#close-runtime-logs').addEventListener('click', () => runtimeLogDialog.close());
@@ -995,7 +1070,7 @@ document.querySelector('#export-runtime-logs').addEventListener('click', async (
 document.querySelector('#close-update').addEventListener('click', () => updateDialog.close());
 document.querySelector('#save-update-settings').addEventListener('click', async () => {
   try {
-    await window.toolbox.saveUpdateSettings({ checkOnLaunch: updateCheckOnLaunch.checked, autoDownload: updateAutoDownload.checked, autoInstallOnQuit: updateAutoInstall.checked });
+    await window.toolbox.saveUpdateSettings({ source: updateSource.value, checkOnLaunch: updateCheckOnLaunch.checked, autoDownload: updateAutoDownload.checked, autoInstallOnQuit: updateAutoInstall.checked });
     showToast('更新偏好已保存。');
   } catch (error) { showToast(`保存失败：${error.message || '请重试。'}`); }
 });
@@ -1004,6 +1079,7 @@ checkUpdateButton.addEventListener('click', async () => {
 });
 openUpdatePageButton.addEventListener('click', async () => { const state = await window.toolbox.getUpdateState(); if (state.releaseUrl) await window.toolbox.launch(state.releaseUrl); });
 downloadUpdateButton.addEventListener('click', async () => { try { await window.toolbox.downloadUpdate(); } catch (error) { showToast(`下载更新失败：${error.message || '请稍后重试。'}`); } });
+cancelUpdateDownloadButton.addEventListener('click', async () => { try { await window.toolbox.cancelUpdateDownload(); } catch (error) { showToast(`取消下载失败：${error.message || '请稍后重试。'}`); } });
 installUpdateButton.addEventListener('click', async () => { try { await window.toolbox.installUpdate(); } catch (error) { showToast(`安装更新失败：${error.message || '请重试。'}`); } });
 window.toolbox?.onUpdateStatus?.((state) => { renderUpdateState(state); if (state.phase === 'error' && updateDialog.open) showToast(`更新失败：${state.error || '请稍后重试。'}`); });
 document.querySelector('#close-background-dialog').addEventListener('click', () => backgroundDialog.close());
@@ -1196,13 +1272,20 @@ function renderUpdateState(state) {
   updateCurrentVersion.textContent = state.currentVersion || '—';
   updateStatus.textContent = state.message || '尚未检查更新。';
   updateNotes.innerHTML = DOMPurify.sanitize(marked.parse(state.releaseNotes || '', { gfm: true, breaks: true }));
-  updateSourceHint.textContent = state.supported ? '官方更新资源仅来自 GitHub Releases；检查超时或失败不会影响工具箱正常使用。' : '此环境不提供自动更新。若后续发行包配置了官方更新源，可在这里检查或前往 Releases 下载。';
+  updateSourceHint.textContent = state.supported ? '当前更新源为 GitHub Releases；未来可在此增加官方镜像或其他更新源。检查超时或失败不会影响工具箱正常使用。' : '此环境不提供自动更新。若后续发行包配置了官方更新源，可在这里检查或前往 Releases 下载。';
+  const formatBytes = (value) => { const bytes = Number(value) || 0; return bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`; };
+  const downloading = state.phase === 'downloading' || state.phase === 'cancelling';
+  updateProgress.hidden = !downloading;
+  updateProgressBar.value = Math.max(0, Math.min(100, Number(state.progress) || 0));
+  updateProgressDetail.textContent = state.phase === 'cancelling' ? '正在取消并清理临时更新文件…' : `${Math.round(Number(state.progress) || 0)}% · ${formatBytes(state.transferred)} / ${formatBytes(state.total)} · ${formatBytes(state.bytesPerSecond)}/s`;
   const unavailable = !state.supported;
   checkUpdateButton.disabled = unavailable || state.phase === 'checking';
   openUpdatePageButton.hidden = !state.releaseUrl;
   updateAutoDownload.disabled = unavailable;
   updateAutoInstall.disabled = unavailable;
   downloadUpdateButton.hidden = state.phase !== 'available';
+  cancelUpdateDownloadButton.hidden = !downloading;
+  cancelUpdateDownloadButton.disabled = state.phase === 'cancelling';
   installUpdateButton.hidden = state.phase !== 'downloaded';
 }
 function formatRuntimeLog(entry) {
@@ -1243,21 +1326,43 @@ async function openUpdateDialog() {
   setSettingsMenu(false);
   const [state, settings] = await Promise.all([window.toolbox.getUpdateState(), window.toolbox.getUpdateSettings()]);
   updateCheckOnLaunch.checked = settings.checkOnLaunch;
+  updateSource.value = settings.source || 'github-release';
   updateAutoDownload.checked = settings.autoDownload;
   updateAutoInstall.checked = settings.autoInstallOnQuit;
   renderUpdateState(state);
   updateDialog.showModal();
 }
 function renderToolPackStatus(status) {
+  renderToolPackDownloadState(status.download || toolPackDownloadState);
+  if (isToolPackDownloadActive()) {
+    toolPackStatus.textContent = toolPackDownloadState.message || '正在处理工具包任务…';
+    toolPackDetail.textContent = toolPackDownloadState.phase === 'installing' ? '下载文件已完成，正在校验并安全安装。安装阶段不可中断，避免破坏现有工具文件。' : '关闭后再次打开此窗口，仍可查看同一下载任务的实时状态。';
+    downloadToolPackButton.textContent = '下载任务进行中';
+    downloadToolPackButton.disabled = false;
+    return;
+  }
   if (status.installed) toolPackStatus.textContent = `已安装官方工具资源包 ${status.installedVersion}（${status.fileCount} 个文件）。`;
   else if (status.managed) toolPackStatus.textContent = '已安装的工具资源包不完整；可重新安装进行修复。';
   else toolPackStatus.textContent = '尚未安装官方工具资源包；默认本地工具暂不可启动。';
-  toolPackDetail.textContent = status.downloadConfigured ? `可下载官方资源包${status.availableVersion ? ` ${status.availableVersion}` : ''}；应用更新不会覆盖已安装的工具。` : '官方在线资源包尚未配置。你可从 GitHub Releases 下载 ZIP 后，在此选择本地文件安装。';
-  downloadToolPackButton.disabled = !status.downloadConfigured;
+  toolPackDetail.textContent = status.downloadConfigured ? `已发现官方资源包${status.availableVersion ? ` ${status.availableVersion}` : ''}；应用更新不会覆盖已安装的工具。` : (status.discoveryReason === 'failed' ? '暂时无法连接 GitHub 查询资源包；你仍可选择本地 ZIP 安装。' : '尚未发现与当前频道兼容的官方资源包。你仍可从 GitHub Releases 下载 ZIP 后在此安装。');
+  downloadToolPackButton.disabled = false;
   downloadToolPackButton.textContent = status.installed ? '下载并更新' : '下载并安装';
 }
 async function refreshToolPackStatus() { const status = await window.toolbox.getToolPackStatus(); renderToolPackStatus(status); return status; }
-async function openToolPackDialog() { setSettingsMenu(false); await refreshToolPackStatus(); toolPackDialog.showModal(); }
+function isToolPackDownloadActive() { return ['discovering', 'downloading', 'installing', 'cancelling'].includes(toolPackDownloadState.phase); }
+function formatTransferBytes(value) { const bytes = Number(value) || 0; return bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
+function renderToolPackDownloadState(state) {
+  toolPackDownloadState = { ...toolPackDownloadState, ...(state || {}) };
+  const active = isToolPackDownloadActive(); const downloading = toolPackDownloadState.phase === 'downloading';
+  toolPackProgress.hidden = !active;
+  toolPackProgressBar.value = Math.max(0, Math.min(100, Number(toolPackDownloadState.progress) || 0));
+  toolPackProgressDetail.textContent = downloading
+    ? `${Math.round(Number(toolPackDownloadState.progress) || 0)}% · ${formatTransferBytes(toolPackDownloadState.transferred)} / ${formatTransferBytes(toolPackDownloadState.total)} · ${formatTransferBytes(toolPackDownloadState.bytesPerSecond)}/s`
+    : toolPackDownloadState.message || '正在处理工具包任务…';
+  cancelToolPackDownloadButton.hidden = !['discovering', 'downloading', 'cancelling'].includes(toolPackDownloadState.phase);
+  cancelToolPackDownloadButton.disabled = toolPackDownloadState.phase === 'cancelling';
+}
+async function openToolPackDialog() { setSettingsMenu(false); const [status, download] = await Promise.all([refreshToolPackStatus(), window.toolbox.getToolPackDownloadState()]); renderToolPackDownloadState(download || status.download); toolPackDialog.showModal(); }
 renderGuide();
 document.querySelector('#open-guide').addEventListener('click', () => guideDialog.showModal());
 document.querySelector('#close-guide').addEventListener('click', () => guideDialog.close());
